@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Vehicle Predictive Maintenance</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #141e22;
+            --card-bg: #1e292e;
+            --accent-orange: linear-gradient(135deg, #ff8c42, #f35f3d);
+            --accent-cyan: #00d2ff;
+            --text-gray: #aab8c2;
+            --danger-red: linear-gradient(135deg, #e74c3c, #c0392b);
+            --warning-amber: linear-gradient(135deg, #f39c12, #d35400);
+        }
+
+        body {
+            margin: 0;
+            padding: 30px;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: var(--bg-dark);
+            color: white;
+            letter-spacing: 0.5px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 35px;
+            font-weight: 400;
+            font-size: 2.2rem;
+            color: #ffffff;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .kpi-card {
+            background: var(--accent-orange);
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(243, 95, 61, 0.25);
+            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 15px 40px rgba(243, 95, 61, 0.4);
+        }
+
+        .kpi-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            opacity: 0.85;
+            margin-bottom: 10px;
+        }
+
+        .kpi-value {
+            font-size: 34px;
+            font-weight: 700;
+        }
+
+        .controls {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 14px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+        }
+
+        button {
+            background: #0b84f3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button:hover { background: #0070d1; box-shadow: 0 0 15px rgba(11, 132, 243, 0.4); }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+        }
+
+        .full { grid-column: 1 / 3; }
+
+        .box {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .section-title {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            color: #ffffff;
+            font-weight: 500;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            color: #d1d1d1;
+        }
+
+        th {
+            text-align: left;
+            padding: 15px;
+            border-bottom: 2px solid rgba(255,255,255,0.05);
+            color: var(--text-gray);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        tr:hover { background: rgba(255,255,255,0.02); }
+
+        .safe { color: #2ecc71; font-weight: 700; }
+        .warning-status { color: #f39c12; font-weight: 700; }
+        .critical { color: #e74c3c; font-weight: 700; }
+
+        .insight {
+            background: rgba(0,0,0,0.2);
+            padding: 20px;
+            border-radius: 12px;
+            line-height: 1.8;
+            border-left: 4px solid var(--accent-cyan);
+            color: var(--text-gray);
+        }
+
+        canvas { margin-top: 15px; }
+
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    <h1>Vehicle Predictive Maintenance Dashboard</h1>
+
+    <div class="kpi-grid">
+        <div class="kpi-card" id="healthCardContainer">
+            <div class="kpi-title">Vehicle Health Score</div>
+            <div class="kpi-value" id="healthScore">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Risk Score</div>
+            <div class="kpi-value" id="riskCard">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Time to Fault</div>
+            <div class="kpi-value" id="ttfCard">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Top Risk Component</div>
+            <div class="kpi-value" id="topComponent" style="font-size: 24px;">-</div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <input type="file" id="file" style="color: #888;">
+        <button onclick="analyze()">Analyze Vehicle</button>
+        <button onclick="downloadReport()" style="background: transparent; border: 1px solid #0b84f3;">Download Report</button>
+    </div>
+
+    <div class="dashboard-grid">
+        <div class="box full">
+            <div class="section-title">Risk Trend</div>
+            <canvas id="riskChart"></canvas>
+        </div>
+
+        <div class="box full">
+            <div class="section-title">Contextual Intelligence (Virtual Sensing)</div>
+            <table id="contextTable">
+                <thead>
+                    <tr>
+                        <th>Environmental Factor</th>
+                        <th>Inferred Value</th>
+                        <th>Derived From (Sensor)</th>
+                        <th>AI Confidence</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Estimated Ambient Temp</td>
+                        <td id="inferredTemp">-</td>
+                        <td>Coolant Baseline vs Load</td>
+                        <td id="confTemp">-</td>
+                    </tr>
+                    <tr>
+                        <td>Estimated Humidity</td>
+                        <td id="inferredHum">-</td>
+                        <td>Battery Voltage Std. Dev</td>
+                        <td id="confHum">-</td>
+                    </tr>
+                    <tr>
+                        <td>Climate Risk Penalty</td>
+                        <td id="climatePenalty">-</td>
+                        <td>Environmental Stress Engine</td>
+                        <td id="confPenalty">-</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="box">
+            <div class="section-title">Sensor Severity Trend</div>
+            <canvas id="sensorChart"></canvas>
+        </div>
+
+        <div class="box">
+            <div class="section-title">Component Failure Trend</div>
+            <canvas id="componentChart"></canvas>
+        </div>
+
+        <div class="box">
+            <div class="section-title">Maintenance Priority</div>
+            <table id="maintenanceTable">
+                <thead>
+                    <tr><th>Priority</th><th>Component</th><th>Probability</th><th>Action</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="box">
+            <div class="section-title">Risk Distribution</div>
+            <div style="max-width: 320px; margin: auto;">
+                <canvas id="riskDistributionChart"></canvas>
+            </div>
+        </div>
+
+        <div class="box full">
+            <div class="section-title">AI Maintenance Insight</div>
+            <div class="insight" id="aiInsight">Upload data to generate maintenance insights.</div>
+            <br>
+            <div class="section-title">AI Vehicle SWOT Analysis</div>
+            <div class="insight" id="swotBox">Waiting for analysis...</div>
+        </div>
+
+        <div class="box full">
+            <div class="section-title">Vehicle Diagnostic History</div>
+            <table id="historyTable">
+                <thead>
+                    <tr><th>Date</th><th>File</th><th>Risk</th><th>Status</th><th>Root Causes</th><th>Recommended Components</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let riskChart, sensorChart, componentChart, riskDistributionChart;
+
+    async function analyze() {
+        const file = document.getElementById("file").files[0];
+        if(!file) { alert("Upload CSV"); return; }
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const res = await fetch("http://127.0.0.1:8001/predict", {method:"POST", body:formData});
+        const data = await res.json();
+
+        // 1. KPI Updates
+        document.getElementById("riskCard").innerText = data.risk;
+        document.getElementById("ttfCard").innerText = data.time_to_fault;
+        
+        // 2. Health Card logic
+        const health = ((1 - data.risk) * 100).toFixed(0);
+        document.getElementById("healthScore").innerText = health + "/100";
+        
+        const healthCard = document.getElementById("healthCardContainer");
+        if (health < 20) {
+            healthCard.style.background = "var(--danger-red)";
+        } else if (health < 50) {
+            healthCard.style.background = "var(--warning-amber)";
+        } else {
+            healthCard.style.background = "var(--accent-orange)";
+        }
+        
+        if(data.recommended_components.length > 0) {
+            document.getElementById("topComponent").innerText = data.recommended_components[0][0];
+        }
+
+        // 3. Contextual Intelligence
+        document.getElementById("inferredTemp").innerText = data.ambient_temp + "°C";
+        document.getElementById("inferredHum").innerText = data.humidity + "%";
+        document.getElementById("climatePenalty").innerText = "+" + data.climate_stress_pct + "%";
+        
+        // --- NEW DYNAMIC CONFIDENCE LOGIC ---
+        // 1. Temp Confidence (Coolant Stability)
+        if (data.sensor_severity["Coolant Temp (°C)"] > 35) {
+            document.getElementById("confTemp").innerText = "Medium";
+            document.getElementById("confTemp").className = "warning-status";
+        } else {
+            document.getElementById("confTemp").innerText = "High";
+            document.getElementById("confTemp").className = "safe";
+        }
+
+        // 2. Humidity Confidence (Battery Jitter)
+        if (data.sensor_severity["Battery Voltage (V)"] > 40) {
+            document.getElementById("confHum").innerText = "Low";
+            document.getElementById("confHum").className = "critical";
+        } else if (data.sensor_severity["Battery Voltage (V)"] > 20) {
+            document.getElementById("confHum").innerText = "Medium";
+            document.getElementById("confHum").className = "warning-status";
+        } else {
+            document.getElementById("confHum").innerText = "High";
+            document.getElementById("confHum").className = "safe";
+        }
+
+        // 3. Penalty Confidence (Overall Risk impact)
+        if (data.risk > 0.85) {
+            document.getElementById("confPenalty").innerText = "Medium";
+            document.getElementById("confPenalty").className = "warning-status";
+        } else {
+            document.getElementById("confPenalty").innerText = "High";
+            document.getElementById("confPenalty").className = "safe";
+        }
+
+        // 4. Insights
+        document.getElementById("aiInsight").innerText = 
+            `Climate Impact: +${data.climate_stress_pct}% due to environmental factors. ` +
+            `Est. Ambient Temp: ${data.ambient_temp}°C. ` +
+            `Primary concern: ${data.recommended_components[0][0]}. ` + 
+            `Root cause likely: ${data.root_causes[0]}. Recommended inspection required.`;
+
+        if(data.swot) {
+            let swotHtml = "<b>Strengths:</b> " + data.swot.strengths.join(", ") + "<br>";
+            swotHtml += "<b>Weaknesses:</b> " + data.swot.weaknesses.join(", ") + "<br>";
+            swotHtml += "<b>Opportunities:</b> " + data.swot.opportunities.join(", ") + "<br>";
+            swotHtml += "<b>Threats:</b> " + data.swot.threats.join(", ");
+            document.getElementById("swotBox").innerHTML = swotHtml;
+        }
+
+        // 5. CHARTS
+        if(riskChart) riskChart.destroy();
+        riskChart = new Chart(document.getElementById("riskChart"), {
+            type: "line",
+            data: {
+                labels: data.time_axis,
+                datasets: [{
+                    label: "Risk Score",
+                    data: data.risk_trend,
+                    borderColor: "#00d2ff",
+                    backgroundColor: "rgba(0, 210, 255, 0.1)",
+                    tension: 0.4,
+                    fill: true,
+                    borderWidth: 3,
+                    pointRadius: 0
+                }]
+            },
+            options: { scales: { y: { grid: { color: "rgba(255,255,255,0.05)" }, min: 0, max: 1 }, x: { grid: { display: false } } } }
+        });
+
+        if(sensorChart) sensorChart.destroy();
+        sensorChart = new Chart(document.getElementById("sensorChart"), {
+            type: "line",
+            data: {
+                labels: Object.keys(data.sensor_severity),
+                datasets: [{
+                    label: "Severity %",
+                    data: Object.values(data.sensor_severity),
+                    borderColor: "#f39c12",
+                    backgroundColor: "rgba(243, 156, 18, 0.2)",
+                    fill: true,
+                    tension: 0.4
+                }]
+            }
+        });
+
+        if(componentChart) componentChart.destroy();
+        componentChart = new Chart(document.getElementById("componentChart"), {
+            type: "line",
+            data: {
+                labels: data.recommended_components.map(x => x[0]),
+                datasets: [{
+                    label: "Failure %",
+                    data: data.recommended_components.map(x => x[1]),
+                    borderColor: "#ff4d4d",
+                    backgroundColor: "rgba(255, 77, 77, 0.2)",
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 3,
+                    pointRadius: 4
+                }]
+            }
+        });
+
+        // 6. Maintenance Priority Table
+        const maint = document.querySelector("#maintenanceTable tbody");
+        maint.innerHTML = "";
+        data.recommended_components.forEach((item, index) => {
+            let priority = "Low"; let cls = "low"; let action = "Monitor";
+            if(index === 0) { priority = "High"; cls = "high"; action="Immediate Inspection"; }
+            else if(index === 1) { priority = "Medium"; cls = "medium"; action="Schedule Maintenance"; }
+            const row = document.createElement("tr");
+            row.innerHTML = `<td class="${cls}">${priority}</td><td>${item[0]}</td><td>${item[1]}%</td><td>${action}</td>`;
+            maint.appendChild(row);
+        });
+
+        loadHistory();
+    }
+
+    async function loadHistory() {
+        const res = await fetch("http://127.0.0.1:8001/history");
+        const historyData = await res.json();
+        const table = document.querySelector("#historyTable tbody");
+        table.innerHTML = "";
+        let safe=0, warning=0, critical=0;
+
+        historyData.forEach(row => {
+            let cls = "safe";
+            if(row.status === "WARNING") { cls = "warning-status"; warning++; }
+            if(row.status === "CRITICAL") { cls = "critical"; critical++; }
+            if(row.status === "SAFE") safe++;
+            
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${row.upload_time}</td><td>${row.file_name}</td><td>${row.risk.toFixed(3)}</td><td class="${cls}">${row.status}</td><td>${row.root_causes}</td><td>${row.recommended_components}</td>`;
+            table.appendChild(tr);
+        });
+
+        if(riskDistributionChart) riskDistributionChart.destroy();
+        riskDistributionChart = new Chart(document.getElementById("riskDistributionChart"), {
+            type: "doughnut",
+            data: {
+                labels: ["SAFE", "WARNING", "CRITICAL"],
+                datasets: [{
+                    data: [safe, warning, critical],
+                    backgroundColor: ["#2ecc71", "#f39c12", "#e74c3c"],
+                    borderWidth: 0
+                }]
+            },
+            options: { cutout: '75%', plugins: { legend: { position: 'bottom', labels: { color: '#fff' } } } }
+        });
+    }
+
+    function downloadReport() { html2pdf().from(document.body).save("vehicle_report.pdf"); }
+    window.onload = loadHistory;
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+websockets
+pandas
+numpy
+joblib
+psycopg2-binary
+python-multipart
+python-dotenv
+scipy
+python-jose[cryptography]
+bcrypt
+apscheduler
+pydantic
+requests

@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Vehicle Predictive Maintenance</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #141e22;
+            --card-bg: #1e292e;
+            --accent-orange: linear-gradient(135deg, #ff8c42, #f35f3d);
+            --accent-cyan: #00d2ff;
+            --text-gray: #aab8c2;
+            --danger-red: linear-gradient(135deg, #e74c3c, #c0392b);
+            --warning-amber: linear-gradient(135deg, #f39c12, #d35400);
+        }
+        body { margin:0; padding:30px; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg-dark); color:white; letter-spacing:0.5px; }
+        .container { max-width:1600px; margin:auto; }
+        h1 { text-align:center; margin-bottom:35px; font-weight:400; font-size:2.2rem; color:#ffffff; }
+
+        .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:25px; margin-bottom:30px; }
+        .kpi-card { background:var(--accent-orange); padding:25px; border-radius:16px; box-shadow:0 10px 30px rgba(243,95,61,0.25); transition:0.4s cubic-bezier(0.4,0,0.2,1); border:1px solid rgba(255,255,255,0.1); }
+        .kpi-card:hover { transform:translateY(-8px); box-shadow:0 15px 40px rgba(243,95,61,0.4); }
+        .kpi-title { font-size:13px; font-weight:600; text-transform:uppercase; opacity:0.85; margin-bottom:10px; }
+        .kpi-value { font-size:34px; font-weight:700; }
+
+        .controls { background:var(--card-bg); padding:20px; border-radius:14px; margin-bottom:30px; border:1px solid rgba(255,255,255,0.05); display:flex; justify-content:center; align-items:center; gap:15px; flex-wrap:wrap; }
+        button { background:#0b84f3; color:white; border:none; padding:12px 24px; border-radius:8px; font-weight:600; cursor:pointer; transition:0.2s; }
+        button:hover { background:#0070d1; box-shadow:0 0 15px rgba(11,132,243,0.4); }
+
+        .dashboard-grid { display:grid; grid-template-columns:1fr 1fr; gap:25px; }
+        .full { grid-column:1/3; }
+        .box { background:var(--card-bg); padding:25px; border-radius:16px; border:1px solid rgba(255,255,255,0.05); box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+        .section-title { font-size:1.2rem; margin-bottom:20px; color:#ffffff; font-weight:500; }
+
+        table { width:100%; border-collapse:collapse; color:#d1d1d1; }
+        th { text-align:left; padding:15px; border-bottom:2px solid rgba(255,255,255,0.05); color:var(--text-gray); font-weight:600; text-transform:uppercase; font-size:12px; }
+        td { padding:15px; border-bottom:1px solid rgba(255,255,255,0.05); }
+        tr:hover { background:rgba(255,255,255,0.02); }
+
+        .safe { color:#2ecc71; font-weight:700; }
+        .warning-status { color:#f39c12; font-weight:700; }
+        .critical { color:#e74c3c; font-weight:700; }
+        .insight { background:rgba(0,0,0,0.2); padding:20px; border-radius:12px; line-height:1.8; border-left:4px solid var(--accent-cyan); color:var(--text-gray); }
+        canvas { margin-top:15px; }
+
+        /* ── Climate Impact Styles (existing) ─────────────────────────── */
+        .condition-badge { display:inline-block; padding:6px 18px; border-radius:20px; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:18px; }
+        .badge-desert { background:rgba(231,76,60,0.2); color:#e74c3c; border:1px solid #e74c3c; }
+        .badge-cold   { background:rgba(52,152,219,0.2); color:#3498db; border:1px solid #3498db; }
+        .badge-normal { background:rgba(46,204,113,0.2); color:#2ecc71; border:1px solid #2ecc71; }
+        .climate-kpi-row { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:22px; }
+        .climate-kpi { background:rgba(0,0,0,0.25); border-radius:12px; padding:16px 18px; border:1px solid rgba(255,255,255,0.06); }
+        .climate-kpi .ck-label { font-size:11px; text-transform:uppercase; color:var(--text-gray); letter-spacing:0.8px; margin-bottom:6px; }
+        .climate-kpi .ck-value { font-size:22px; font-weight:700; color:#ffffff; }
+        .climate-kpi .ck-sub { font-size:11px; color:var(--text-gray); margin-top:4px; }
+        .split-bar-wrap { margin:16px 0; }
+        .split-bar-label { display:flex; justify-content:space-between; font-size:12px; color:var(--text-gray); margin-bottom:6px; }
+        .split-bar-track { width:100%; height:14px; border-radius:7px; background:rgba(255,255,255,0.07); overflow:hidden; display:flex; }
+        .split-bar-climate  { height:100%; background:linear-gradient(90deg,#e74c3c,#f39c12); border-radius:7px 0 0 7px; transition:width 0.8s ease; }
+        .split-bar-internal { height:100%; background:linear-gradient(90deg,#0b84f3,#00d2ff); border-radius:0 7px 7px 0; transition:width 0.8s ease; }
+        .split-legend { display:flex; gap:20px; margin-top:8px; font-size:12px; }
+        .split-legend span { display:flex; align-items:center; gap:6px; color:var(--text-gray); }
+        .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+        .dot-climate { background:#e74c3c; } .dot-internal { background:#0b84f3; }
+        .impact-high   { color:#e74c3c; font-weight:700; }
+        .impact-medium { color:#f39c12; font-weight:700; }
+        .impact-low    { color:#2ecc71; font-weight:700; }
+        .shift-positive { color:#e74c3c; } .shift-negative { color:#3498db; } .shift-neutral { color:#2ecc71; }
+        .model-tag { display:inline-block; font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(0,210,255,0.12); color:var(--accent-cyan); border:1px solid rgba(0,210,255,0.2); margin-left:6px; vertical-align:middle; }
+        .climate-section-label { font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--text-gray); margin:18px 0 10px 0; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; }
+
+        /* ── NEW: Driver Behavior Score ───────────────────────────────── */
+        .driver-score-ring { display:flex; align-items:center; gap:30px; margin-bottom:20px; }
+        .score-circle { width:110px; height:110px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:28px; font-weight:700; flex-shrink:0; border:4px solid; }
+        .score-a { border-color:#2ecc71; color:#2ecc71; background:rgba(46,204,113,0.1); }
+        .score-b { border-color:#00d2ff; color:#00d2ff; background:rgba(0,210,255,0.1); }
+        .score-c { border-color:#f39c12; color:#f39c12; background:rgba(243,156,18,0.1); }
+        .score-d { border-color:#e67e22; color:#e67e22; background:rgba(230,126,34,0.1); }
+        .score-f { border-color:#e74c3c; color:#e74c3c; background:rgba(231,76,60,0.1); }
+        .score-grade-label { font-size:11px; margin-top:4px; opacity:0.8; }
+        .driver-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; flex:1; }
+        .dstat { background:rgba(0,0,0,0.2); border-radius:10px; padding:12px; border:1px solid rgba(255,255,255,0.05); }
+        .dstat-label { font-size:10px; text-transform:uppercase; color:var(--text-gray); margin-bottom:4px; }
+        .dstat-value { font-size:18px; font-weight:700; }
+        .event-tag { display:inline-block; background:rgba(231,76,60,0.15); border:1px solid rgba(231,76,60,0.3); color:#e74c3c; font-size:11px; padding:4px 10px; border-radius:6px; margin:3px; }
+        .event-safe { background:rgba(46,204,113,0.1); border-color:rgba(46,204,113,0.3); color:#2ecc71; }
+
+        /* ── NEW: RUL Table ────────────────────────────────────────────── */
+        .rul-bar-wrap { background:rgba(0,0,0,0.2); border-radius:6px; overflow:hidden; height:8px; margin-top:6px; }
+        .rul-bar { height:100%; border-radius:6px; transition:width 0.6s ease; }
+
+        /* ── NEW: Anomaly Scrubber ─────────────────────────────────────── */
+        .scrubber-wrap { margin-top:10px; }
+        .scrubber-slider { width:100%; -webkit-appearance:none; height:6px; border-radius:3px; background:rgba(255,255,255,0.1); outline:none; cursor:pointer; }
+        .scrubber-slider::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:#00d2ff; cursor:pointer; }
+        .scrubber-info { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:16px; }
+        .scrubber-card { background:rgba(0,0,0,0.25); border-radius:10px; padding:12px; border:1px solid rgba(255,255,255,0.06); }
+        .scrubber-card .sc-label { font-size:10px; text-transform:uppercase; color:var(--text-gray); margin-bottom:4px; }
+        .scrubber-card .sc-value { font-size:18px; font-weight:700; }
+        .anomaly-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-left:6px; }
+        .anomaly-dot.on  { background:#e74c3c; box-shadow:0 0 6px #e74c3c; }
+        .anomaly-dot.off { background:#2ecc71; }
+        .scrubber-timestamp { font-size:12px; color:var(--text-gray); margin-top:8px; text-align:center; }
+
+        /* ── NEW: OBD-II Live Panel ────────────────────────────────────── */
+        .live-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:700; }
+        .live-on  { background:rgba(46,204,113,0.15); color:#2ecc71; border:1px solid #2ecc71; }
+        .live-off { background:rgba(170,184,194,0.1); color:var(--text-gray); border:1px solid rgba(255,255,255,0.1); }
+        .live-dot { width:8px; height:8px; border-radius:50%; }
+        .live-dot.on  { background:#2ecc71; animation:pulse 1s infinite; }
+        .live-dot.off { background:var(--text-gray); }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+        .live-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:16px 0; }
+        .live-card { background:rgba(0,0,0,0.25); border-radius:10px; padding:14px; border:1px solid rgba(255,255,255,0.06); text-align:center; }
+        .live-card .lc-label { font-size:10px; text-transform:uppercase; color:var(--text-gray); margin-bottom:6px; }
+        .live-card .lc-value { font-size:22px; font-weight:700; transition:color 0.3s; }
+        .live-risk-bar { width:100%; height:10px; border-radius:5px; background:rgba(255,255,255,0.07); overflow:hidden; margin-top:12px; }
+        .live-risk-fill { height:100%; border-radius:5px; background:linear-gradient(90deg,#2ecc71,#f39c12,#e74c3c); transition:width 0.5s ease; }
+
+        /* ── NEW: Multi-File Comparison ────────────────────────────────── */
+        .compare-controls { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+        .compare-tag { background:rgba(0,210,255,0.1); border:1px solid rgba(0,210,255,0.2); color:var(--accent-cyan); padding:4px 10px; border-radius:6px; font-size:12px; }
+
+        /* ── NEW: Alert Status ─────────────────────────────────────────── */
+        .alert-row { display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; }
+        .alert-chip { padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; }
+        .alert-sent     { background:rgba(46,204,113,0.15); color:#2ecc71; border:1px solid #2ecc71; }
+        .alert-pending  { background:rgba(243,156,18,0.1);  color:#f39c12; border:1px solid #f39c12; }
+        .alert-inactive { background:rgba(255,255,255,0.05); color:var(--text-gray); border:1px solid rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body>
+<!-- ═══════════════ AUTH NAV BAR ═══════════════ -->
+<div id="authNav" style="background:#1e292e;padding:12px 30px;margin:-30px -30px 30px -30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07);">
+    <div style="font-size:14px;color:#aab8c2;">🚗 Vehicle Predictive Maintenance</div>
+    <div style="display:flex;align-items:center;gap:12px;" id="authControls">
+        <span id="userGreeting" style="font-size:13px;color:#aab8c2;display:none;"></span>
+        <button onclick="showAuthModal('login')" id="btnLogin" style="padding:7px 16px;font-size:12px;background:transparent;border:1px solid #0b84f3;">Login</button>
+        <button onclick="showAuthModal('register')" id="btnRegister" style="padding:7px 16px;font-size:12px;">Register</button>
+        <button onclick="logout()" id="btnLogout" style="padding:7px 16px;font-size:12px;background:transparent;border:1px solid #e74c3c;display:none;">Logout</button>
+    </div>
+</div>
+
+<!-- ═══════════════ AUTH MODAL ═══════════════ -->
+<div id="authModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;">
+    <div style="background:#1e292e;border-radius:16px;padding:35px;width:380px;border:1px solid rgba(255,255,255,0.1);">
+        <h3 id="authModalTitle" style="margin:0 0 20px 0;color:#ffffff;">Login</h3>
+        <input id="authUsername" placeholder="Username" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:12px;box-sizing:border-box;">
+        <input id="authEmail" type="email" placeholder="Email" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:12px;box-sizing:border-box;display:none;">
+        <input id="authPassword" type="password" placeholder="Password" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:20px;box-sizing:border-box;">
+        <div style="display:flex;gap:10px;">
+            <button id="authSubmitBtn" onclick="submitAuth()" style="flex:1;padding:12px;">Login</button>
+            <button onclick="closeAuthModal()" style="padding:12px 20px;background:transparent;border:1px solid rgba(255,255,255,0.2);">Cancel</button>
+        </div>
+        <div id="authError" style="color:#e74c3c;font-size:12px;margin-top:10px;"></div>
+    </div>
+</div>
+
+
+<!-- ═══════════════ ADD VEHICLE MODAL ═══════════════ -->
+<div id="addVehicleModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:#1e292e;border-radius:16px;padding:35px;width:400px;border:1px solid rgba(255,255,255,0.1);">
+        <h3 style="margin:0 0 20px 0;color:#ffffff;">Add Vehicle</h3>
+        <input id="vName" placeholder="Vehicle Name *" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:12px;box-sizing:border-box;">
+        <select id="vType" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#aab8c2;margin-bottom:12px;box-sizing:border-box;">
+            <option value="petrol_hatchback">Petrol Hatchback</option>
+            <option value="petrol_sedan">Petrol Sedan</option>
+            <option value="diesel_suv">Diesel SUV</option>
+            <option value="diesel_truck">Diesel Truck</option>
+        </select>
+        <input id="vMake" placeholder="Make (e.g. Toyota)" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:12px;box-sizing:border-box;">
+        <input id="vModel" placeholder="Model (e.g. Corolla)" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:12px;box-sizing:border-box;">
+        <input id="vYear" type="number" placeholder="Year (e.g. 2020)" style="width:100%;padding:10px;background:#141e22;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:white;margin-bottom:20px;box-sizing:border-box;">
+        <div style="display:flex;gap:10px;">
+            <button onclick="submitAddVehicle()" style="flex:1;padding:12px;">Add Vehicle</button>
+            <button onclick="document.getElementById('addVehicleModal').style.display='none'" style="padding:12px 20px;background:transparent;border:1px solid rgba(255,255,255,0.2);">Cancel</button>
+        </div>
+        <div id="addVehicleError" style="color:#e74c3c;font-size:12px;margin-top:10px;"></div>
+    </div>
+</div>
+
+<div class="container">
+    <h1>Vehicle Predictive Maintenance Dashboard</h1>
+
+    <!-- ═══════════════════ EXISTING KPI GRID ═══════════════════ -->
+    <div class="kpi-grid">
+        <div class="kpi-card" id="healthCardContainer">
+            <div class="kpi-title">Vehicle Health Score</div>
+            <div class="kpi-value" id="healthScore">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Risk Score</div>
+            <div class="kpi-value" id="riskCard">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Time to Fault</div>
+            <div class="kpi-value" id="ttfCard">-</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Top Risk Component</div>
+            <div class="kpi-value" id="topComponent" style="font-size:24px;">-</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ EXISTING CONTROLS ═══════════════════ -->
+    <div class="controls">
+        <select id="vehicleSelect" onchange="onVehicleChange()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;">
+            <option value="">🚗 Select Vehicle</option>
+        </select>
+        <button onclick="showAddVehicleModal()" style="background:transparent;border:1px solid #2ecc71;color:#2ecc71;padding:10px 16px;font-size:13px;">+ Add Vehicle</button>
+        <input type="file" id="file" style="color:#888;">
+        <button onclick="analyze()">Analyze Vehicle</button>
+        <button onclick="downloadReport()" style="background:transparent;border:1px solid #0b84f3;">Download Report</button>
+    </div>
+
+    <div class="dashboard-grid">
+
+        <!-- ══ EXISTING: Risk Trend ══ -->
+        <div class="box full">
+            <div class="section-title">Risk Trend</div>
+            <canvas id="riskChart"></canvas>
+        </div>
+
+        <!-- ══ SENSOR PERFORMANCE: dropdown + timeline + component impact ══ -->
+        <div class="box full">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;">
+                <div class="section-title" style="margin-bottom:0;">Sensor Performance</div>
+                <select id="sensorDropdown" onchange="onSensorSelect()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;min-width:240px;">
+                    <option value="">— Upload data to see sensors —</option>
+                </select>
+            </div>
+            <div style="display:grid;grid-template-columns:3fr 2fr;gap:24px;align-items:start;">
+                <div>
+                    <div style="font-size:11px;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;" id="sensorChartLabel">Upload data to view sensor performance</div>
+                    <canvas id="sensorChart"></canvas>
+                </div>
+                <div>
+                    <div style="font-size:11px;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Affected Components</div>
+                    <canvas id="sensorComponentChart" style="max-height:220px;display:none;"></canvas>
+                    <div id="sensorComponentList" style="margin-top:12px;color:var(--text-gray);font-size:13px;padding:10px 0;">Select a sensor from the dropdown to see affected components.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ EXISTING: Component Failure Trend ══ -->
+        <div class="box">
+            <div class="section-title">Component Failure Trend</div>
+            <canvas id="componentChart"></canvas>
+        </div>
+
+        <!-- ══ EXISTING: Maintenance Priority ══ -->
+        <div class="box">
+            <div class="section-title">Maintenance Priority</div>
+            <table id="maintenanceTable">
+                <thead><tr><th>Priority</th><th>Component</th><th>Probability</th><th>Action</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- ══ EXISTING: AI Insight + SWOT ══ -->
+        <div class="box full">
+            <div class="section-title">AI Maintenance Insight</div>
+            <div class="insight" id="aiInsight">Upload data to generate maintenance insights.</div>
+            <br>
+            <div class="section-title">AI Vehicle SWOT Analysis</div>
+            <div class="insight" id="swotBox">Waiting for analysis...</div>
+            <!-- Alert status row -->
+            <div class="alert-row" id="alertRow" style="display:none;">
+                <span id="alertWhatsapp" class="alert-chip alert-inactive">📱 WhatsApp: Not configured</span>
+                <span id="alertEmail"    class="alert-chip alert-inactive">📧 Email: Not configured</span>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             NEW 1: Driver Behavior Scoring
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box" id="driverSection" style="display:none;">
+            <div class="section-title">🚗 Driver Behavior Score</div>
+            <div class="driver-score-ring">
+                <div class="score-circle" id="scoreCircle">
+                    <span id="scoreNumber">-</span>
+                    <span class="score-grade-label" id="scoreGradeLabel">-</span>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:18px;font-weight:600;margin-bottom:8px;" id="scoreGradeFull">-</div>
+                    <div style="font-size:12px;color:var(--text-gray);margin-bottom:12px;">
+                        Wear Multiplier: <span id="wearMult" style="color:#f39c12;font-weight:700;">-</span>×
+                        — affects RUL estimates below
+                    </div>
+                    <div id="driverEvents"></div>
+                </div>
+            </div>
+            <div class="driver-stats">
+                <div class="dstat">
+                    <div class="dstat-label">Over-Rev Events</div>
+                    <div class="dstat-value" id="dstatOverRev">-</div>
+                </div>
+                <div class="dstat">
+                    <div class="dstat-label">Rapid Accel</div>
+                    <div class="dstat-value" id="dstatAccel">-</div>
+                </div>
+                <div class="dstat">
+                    <div class="dstat-label">Harsh Brakes</div>
+                    <div class="dstat-value" id="dstatBrake">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             NEW 2: RUL per Component
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box" id="rulSection" style="display:none;">
+            <div class="section-title">⏱ Remaining Useful Life (RUL) per Component</div>
+            <table>
+                <thead>
+                    <tr><th>Component</th><th>RUL (Days)</th><th>Status</th><th>Degradation Progress</th><th>Action</th></tr>
+                </thead>
+                <tbody id="rulBody"></tbody>
+            </table>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             MAINTENANCE LOG
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box full" id="maintenanceLogSection">
+            <div class="section-title">🔧 Maintenance Log
+                <span style="font-size:12px;color:var(--text-gray);font-weight:400;margin-left:10px;">Service history resets RUL for that component</span>
+            </div>
+            <table id="maintLogTable" style="display:none;">
+                <thead>
+                    <tr><th>Component</th><th>Service Date</th><th>Notes</th></tr>
+                </thead>
+                <tbody id="maintLogBody"></tbody>
+            </table>
+            <div id="maintLogEmpty" style="color:var(--text-gray);font-size:13px;padding:10px 0;">No service history recorded yet. Use "Mark Fixed" buttons above to log maintenance.</div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             NEW 3: Anomaly Timeline Scrubber
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box full" id="scrubberSection" style="display:none;">
+            <div class="section-title">
+                🔍 Anomaly Timeline Scrubber
+                <span style="font-size:12px;color:var(--text-gray);font-weight:400;margin-left:10px;">
+                    Drag the slider to replay sensor readings at any point in the trip
+                </span>
+                <span class="anomaly-dot off" id="anomalyDot"></span>
+            </div>
+            <div class="scrubber-wrap">
+                <input type="range" class="scrubber-slider" id="scrubberSlider" min="0" value="0">
+                <div class="scrubber-timestamp" id="scrubberTimestamp">Timestamp: —</div>
+            </div>
+            <div class="scrubber-info">
+                <div class="scrubber-card">
+                    <div class="sc-label">Coolant Temp</div>
+                    <div class="sc-value" id="scCoolant">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">MAP (kPa)</div>
+                    <div class="sc-value" id="scMAP">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Battery Voltage</div>
+                    <div class="sc-value" id="scBattery">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Engine RPM</div>
+                    <div class="sc-value" id="scRPM">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Throttle %</div>
+                    <div class="sc-value" id="scThrottle">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Speed km/h</div>
+                    <div class="sc-value" id="scSpeed">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Fuel Rail Pressure</div>
+                    <div class="sc-value" id="scFuel">—</div>
+                </div>
+                <div class="scrubber-card">
+                    <div class="sc-label">Anomaly Flag</div>
+                    <div class="sc-value" id="scAnomaly">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             NEW 4: OBD-II Live Stream
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box full">
+            <div class="section-title" style="display:flex;align-items:center;gap:12px;">
+                📡 OBD-II Live Stream (Simulated)
+                <span class="live-badge live-off" id="liveBadge">
+                    <span class="live-dot off" id="liveDot"></span>
+                    <span id="liveStatus">Disconnected</span>
+                </span>
+                <button onclick="toggleLive()" id="liveBtn" style="margin-left:auto;padding:8px 18px;font-size:12px;">
+                    Connect Live
+                </button>
+            </div>
+            <div class="live-grid">
+                <div class="live-card"><div class="lc-label">Engine RPM</div><div class="lc-value" id="lRPM">—</div></div>
+                <div class="live-card"><div class="lc-label">Speed km/h</div><div class="lc-value" id="lSpeed">—</div></div>
+                <div class="live-card"><div class="lc-label">Coolant °C</div><div class="lc-value" id="lCoolant">—</div></div>
+                <div class="live-card"><div class="lc-label">MAP kPa</div><div class="lc-value" id="lMAP">—</div></div>
+                <div class="live-card"><div class="lc-label">Battery V</div><div class="lc-value" id="lBattery">—</div></div>
+                <div class="live-card"><div class="lc-label">Fuel Rail bar</div><div class="lc-value" id="lFuel">—</div></div>
+                <div class="live-card"><div class="lc-label">Throttle %</div><div class="lc-value" id="lThrottle">—</div></div>
+                <div class="live-card">
+                    <div class="lc-label">Live Risk</div>
+                    <div class="lc-value" id="lRisk">—</div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--text-gray);margin-bottom:6px;">Live Risk Level</div>
+            <div class="live-risk-bar"><div class="live-risk-fill" id="liveRiskFill" style="width:0%"></div></div>
+            <canvas id="liveChart" style="margin-top:16px;max-height:180px;"></canvas>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             NEW 5: Multi-File Comparison
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box full">
+            <div class="section-title">📊 Multi-Day / Multi-File Comparison</div>
+            <div class="compare-controls">
+                <input type="file" id="compareFiles" multiple accept=".csv" style="color:#888;">
+                <button onclick="compareAnalyze()">Compare Files</button>
+                <span class="compare-tag" id="compareCount" style="display:none;"></span>
+            </div>
+            <canvas id="compareChart" style="display:none;max-height:300px;"></canvas>
+            <table id="compareTable" style="display:none;margin-top:20px;">
+                <thead>
+                    <tr><th>File</th><th>Risk</th><th>Status</th><th>Driver Score</th><th>Worst Component RUL</th><th>Temp</th></tr>
+                </thead>
+                <tbody id="compareBody"></tbody>
+            </table>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             EXISTING: Climate Impact Analysis
+        ══════════════════════════════════════════════════════════ -->
+        <div class="box full" id="climateImpactSection" style="display:none;">
+            <div class="section-title">🌡️ External Climate Impact Analysis
+                <span class="model-tag">Arrhenius</span>
+                <span class="model-tag">Peck Model</span>
+            </div>
+            <div id="conditionBadge" class="condition-badge badge-normal">Normal Conditions</div>
+            <div class="climate-kpi-row">
+                <div class="climate-kpi">
+                    <div class="ck-label">Climate Risk Increase</div>
+                    <div class="ck-value" id="ckClimateImpact">-</div>
+                    <div class="ck-sub">vs. neutral baseline (25°C, 50% RH)</div>
+                </div>
+                <div class="climate-kpi">
+                    <div class="ck-label">Stress Multiplier</div>
+                    <div class="ck-value" id="ckStressMult">-</div>
+                    <div class="ck-sub">Combined Arrhenius × Peck factor</div>
+                </div>
+                <div class="climate-kpi">
+                    <div class="ck-label">Risk if Condition Persists</div>
+                    <div class="ck-value" id="ckWorstRisk">-</div>
+                    <div class="ck-sub">Projected under current climate</div>
+                </div>
+            </div>
+            <div class="climate-section-label">Risk Contribution Split</div>
+            <div class="split-bar-wrap">
+                <div class="split-bar-label">
+                    <span id="splitClimateLabel">Climate: -</span>
+                    <span id="splitInternalLabel">Internal Sensors: -</span>
+                </div>
+                <div class="split-bar-track">
+                    <div class="split-bar-climate"  id="splitBarClimate"  style="width:0%"></div>
+                    <div class="split-bar-internal" id="splitBarInternal" style="width:0%"></div>
+                </div>
+                <div class="split-legend">
+                    <span><span class="dot dot-climate"></span>Climate-driven risk</span>
+                    <span><span class="dot dot-internal"></span>Internal sensor-driven risk</span>
+                </div>
+            </div>
+            <div class="climate-section-label">Component-Level Climate Impact</div>
+            <table><thead><tr><th>Component</th><th>Risk Increase %</th><th>Severity</th><th>Climate Root Cause</th></tr></thead>
+            <tbody id="componentImpactBody"></tbody></table>
+            <div class="climate-section-label">Internal Sensor Shift</div>
+            <table><thead><tr><th>Sensor</th><th>Expected Deviation</th><th>Direction</th></tr></thead>
+            <tbody id="sensorShiftBody"></tbody></table>
+            <div class="climate-section-label">Physics Model Breakdown</div>
+            <div class="insight" id="physicsBreakdown" style="font-size:13px;line-height:2;">—</div>
+        </div>
+
+        <!-- ══ EXISTING: History + Risk Distribution side by side ══ -->
+        <div class="box">
+            <div class="section-title">Vehicle Diagnostic History</div>
+            <table id="historyTable">
+                <thead><tr><th>Date</th><th>File</th><th>Risk</th><th>Status</th><th>Root Causes</th><th>Recommended Components</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="box">
+            <div class="section-title">Risk Distribution</div>
+            <div style="max-width:280px;margin:auto;">
+                <canvas id="riskDistributionChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// GLOBALS
+// ═══════════════════════════════════════════════════════════════
+let riskChart, sensorChart, componentChart, riskDistributionChart, compareChart, liveChart;
+let sensorComponentChartInst = null;
+let lastScrubberData = null;
+let lastSeverityData = null;
+let scrubberData = null;
+let liveWS = null;
+let liveConnected = false;
+let liveRiskHistory = [];
+
+const SENSOR_COMPONENT_MAP = {
+    "Battery Voltage (V)":      { components: ["Battery", "Alternator", "Voltage Regulator"],   impact: [100, 80, 60], color: "#f39c12" },
+    "Coolant Temp (°C)":        { components: ["Radiator", "Thermostat", "Coolant Pump"],        impact: [100, 80, 70], color: "#e74c3c" },
+    "MAP (kPa)":                { components: ["MAP Sensor", "Intake Manifold", "Vacuum Lines"], impact: [100, 70, 60], color: "#00d2ff" },
+    "Fuel Rail Pressure (bar)": { components: ["Fuel Pump", "Fuel Injector", "Fuel Filter"],    impact: [100, 80, 60], color: "#9b59b6" },
+    "Engine RPM":               { components: ["Engine", "Turbocharger", "Timing Belt"],         impact: [100, 65, 55], color: "#2ecc71" },
+    "Vehicle Speed (km/h)":     { components: ["Transmission", "Wheel Bearings", "Brakes"],     impact: [100, 70, 65], color: "#3498db" },
+    "Throttle Position (%)":    { components: ["Throttle Body", "Throttle Sensor", "ECU"],       impact: [100, 90, 50], color: "#e67e22" }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// EXISTING: analyze()
+// ═══════════════════════════════════════════════════════════════
+async function analyze() {
+    const file = document.getElementById("file").files[0];
+    if(!file) { alert("Upload CSV"); return; }
+    const formData = new FormData();
+    formData.append("file", file);
+
+    let data;
+    try {
+        const res = await fetch("/predict", {method:"POST", body:formData});
+        data = await res.json();
+    } catch(err) {
+        alert("❌ Cannot reach backend. Please check your connection.");
+        return;
+    }
+    if(data.error) { alert("❌ Backend error:\n\n" + data.error); return; }
+    if(data.risk === undefined) { alert("❌ Unexpected response. Check console (F12)."); return; }
+
+    // ── Existing KPI
+    document.getElementById("riskCard").innerText   = data.risk;
+    document.getElementById("ttfCard").innerText    = data.time_to_fault;
+    const health = ((1 - data.risk) * 100).toFixed(0);
+    document.getElementById("healthScore").innerText = health + "/100";
+    const hc = document.getElementById("healthCardContainer");
+    hc.style.background = health < 20 ? "var(--danger-red)" : health < 50 ? "var(--warning-amber)" : "var(--accent-orange)";
+    if(data.recommended_components.length > 0)
+        document.getElementById("topComponent").innerText = data.recommended_components[0][0];
+
+    // ── Existing AI Insight
+    document.getElementById("aiInsight").innerText =
+        `Climate Impact: +${data.climate_stress_pct}% due to environmental factors. ` +
+        `Est. Ambient Temp: ${data.ambient_temp}°C. ` +
+        `Primary concern: ${data.recommended_components[0]?.[0] || "N/A"}. ` +
+        `Root cause likely: ${data.root_causes[0]}. Recommended inspection required.`;
+
+    if(data.swot) {
+        document.getElementById("swotBox").innerHTML =
+            `<b>Strengths:</b> ${data.swot.strengths.join(", ")}<br>` +
+            `<b>Weaknesses:</b> ${data.swot.weaknesses.join(", ")}<br>` +
+            `<b>Opportunities:</b> ${data.swot.opportunities.join(", ")}<br>` +
+            `<b>Threats:</b> ${data.swot.threats.join(", ")}`;
+    }
+
+    // ── Alert chips
+    if(data.alert_sent) {
+        document.getElementById("alertRow").style.display = "flex";
+        setAlertChip("alertWhatsapp", data.alert_sent.whatsapp, "📱 WhatsApp");
+        setAlertChip("alertEmail",    data.alert_sent.email,    "📧 Email");
+    }
+
+    // ── Existing Charts
+    buildRiskChart(data.time_axis, data.risk_trend);
+    buildSensorChart(data.sensor_severity);
+    buildComponentChart(data.recommended_components);
+
+    // ── Maintenance Table
+    const maint = document.querySelector("#maintenanceTable tbody");
+    maint.innerHTML = "";
+    data.recommended_components.forEach((item, i) => {
+        const p = i===0 ? "High" : i===1 ? "Medium" : "Low";
+        const a = i===0 ? "Immediate Inspection" : i===1 ? "Schedule Maintenance" : "Monitor";
+        maint.innerHTML += `<tr><td class="${p.toLowerCase()}">${p}</td><td>${item[0]}</td><td>${item[1]}%</td><td>${a}</td></tr>`;
+    });
+
+    // ── Climate Impact (existing)
+    if(data.extreme_analysis && data.contribution_split)
+        renderClimateImpact(data);
+
+    // ══════════════════════════════════════════════
+    // NEW: Driver Behavior
+    // ══════════════════════════════════════════════
+    if(data.driver_behavior) renderDriverBehavior(data.driver_behavior);
+
+    // ══════════════════════════════════════════════
+    // NEW: RUL
+    // ══════════════════════════════════════════════
+    if(data.rul) renderRUL(data.rul);
+
+    // ══════════════════════════════════════════════
+    // NEW: Scrubber
+    // ══════════════════════════════════════════════
+    if(data.scrubber) initScrubber(data.scrubber);
+
+    loadHistory();
+}
+
+// ── helper
+function setConfidence(id, text, warn) {
+    const el = document.getElementById(id);
+    el.innerText  = text;
+    el.className  = text === "Low" ? "critical" : text === "Medium" ? "warning-status" : "safe";
+}
+function setAlertChip(id, sent, label) {
+    const el = document.getElementById(id);
+    if(sent) { el.textContent = label + ": Sent ✓"; el.className = "alert-chip alert-sent"; }
+    else { el.textContent = label + ": Not configured"; el.className = "alert-chip alert-inactive"; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: renderDriverBehavior
+// ═══════════════════════════════════════════════════════════════
+function renderDriverBehavior(db) {
+    document.getElementById("driverSection").style.display = "block";
+    document.getElementById("scoreNumber").innerText    = db.score;
+    document.getElementById("scoreGradeLabel").innerText = db.grade.split("—")[0].trim();
+    document.getElementById("scoreGradeFull").innerText  = db.grade;
+    document.getElementById("wearMult").innerText        = db.wear_multiplier;
+
+    // Color the circle by grade letter
+    const circle = document.getElementById("scoreCircle");
+    circle.className = "score-circle " +
+        (db.score >= 85 ? "score-a" : db.score >= 70 ? "score-b" :
+         db.score >= 55 ? "score-c" : db.score >= 40 ? "score-d" : "score-f");
+
+    // Events
+    const evDiv = document.getElementById("driverEvents");
+    evDiv.innerHTML = db.events.map(e =>
+        e.includes("No aggressive") ?
+        `<span class="event-tag event-safe">✅ ${e}</span>` :
+        `<span class="event-tag">⚠️ ${e}</span>`
+    ).join("");
+
+    document.getElementById("dstatOverRev").innerText = db.over_rev_pct + "%";
+    document.getElementById("dstatAccel").innerText   = db.rapid_accel_count;
+    document.getElementById("dstatBrake").innerText   = db.harsh_brake_count;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: renderRUL
+// ═══════════════════════════════════════════════════════════════
+function renderRUL(rul) {
+    document.getElementById("rulSection").style.display = "block";
+    const tbody = document.getElementById("rulBody");
+    tbody.innerHTML = "";
+    for(const [comp, info] of Object.entries(rul)) {
+        const maxDays = 60;
+        const pct = Math.min(100, (info.rul_days / maxDays) * 100);
+        const barColor = info.urgency === "CRITICAL" ? "#e74c3c" : info.urgency === "WARNING" ? "#f39c12" : "#2ecc71";
+        const cls = info.urgency === "CRITICAL" ? "critical" : info.urgency === "WARNING" ? "warning-status" : "safe";
+        tbody.innerHTML += `
+            <tr>
+                <td>${comp}</td>
+                <td style="font-weight:700;">${info.rul_days} days</td>
+                <td class="${cls}">${info.urgency}</td>
+                <td style="min-width:140px;">
+                    <div class="rul-bar-wrap">
+                        <div class="rul-bar" style="width:${pct}%;background:${barColor};"></div>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-gray);margin-top:3px;">
+                        Degradation: ${info.current_degradation} | Trend slope: ${info.trend_slope}
+                    </div>
+                </td>
+                <td>
+                    <button onclick="logMaintenance('${comp}')" style="padding:5px 12px;font-size:11px;background:rgba(46,204,113,0.15);border:1px solid #2ecc71;color:#2ecc71;border-radius:6px;cursor:pointer;">
+                        ✅ Mark Fixed
+                    </button>
+                </td>
+            </tr>`;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: initScrubber
+// ═══════════════════════════════════════════════════════════════
+function initScrubber(sd) {
+    scrubberData = sd;
+    lastScrubberData = sd;
+    document.getElementById("scrubberSection").style.display = "block";
+    const slider = document.getElementById("scrubberSlider");
+    slider.max   = sd.timestamps.length - 1;
+    slider.value = sd.timestamps.length - 1;
+    updateScrubber(sd.timestamps.length - 1);
+    slider.oninput = () => updateScrubber(parseInt(slider.value));
+}
+
+function updateScrubber(idx) {
+    if(!scrubberData) return;
+    const sd = scrubberData;
+    const s  = sd.sensors;
+
+    document.getElementById("scrubberTimestamp").innerText = "Timestamp: " + sd.timestamps[idx] + "s";
+    document.getElementById("scCoolant").innerText  = (s["Coolant Temp (°C)"]?.[idx] ?? "—") + (s["Coolant Temp (°C)"] ? " °C" : "");
+    document.getElementById("scMAP").innerText      = (s["MAP (kPa)"]?.[idx] ?? "—") + (s["MAP (kPa)"] ? " kPa" : "");
+    document.getElementById("scBattery").innerText  = (s["Battery Voltage (V)"]?.[idx] ?? "—") + (s["Battery Voltage (V)"] ? " V" : "");
+    document.getElementById("scRPM").innerText      = s["Engine RPM"]?.[idx] ?? "—";
+    document.getElementById("scThrottle").innerText = (s["Throttle Position (%)"]?.[idx] ?? "—") + (s["Throttle Position (%)"] ? "%" : "");
+    document.getElementById("scSpeed").innerText    = (s["Vehicle Speed (km/h)"]?.[idx] ?? "—") + (s["Vehicle Speed (km/h)"] ? " km/h" : "");
+    document.getElementById("scFuel").innerText     = (s["Fuel Rail Pressure (bar)"]?.[idx] ?? "—") + (s["Fuel Rail Pressure (bar)"] ? " bar" : "");
+
+    const isAnomaly = sd.anomaly_flags[idx] === 1;
+    const dot   = document.getElementById("anomalyDot");
+    const scAn  = document.getElementById("scAnomaly");
+    dot.className   = "anomaly-dot " + (isAnomaly ? "on" : "off");
+    scAn.innerText  = isAnomaly ? "⚠️ ANOMALY" : "✅ Normal";
+    scAn.style.color = isAnomaly ? "#e74c3c" : "#2ecc71";
+
+    // Highlight anomalous sensor values in red
+    const sensors = ["scCoolant","scMAP","scBattery","scRPM","scThrottle","scSpeed","scFuel"];
+    sensors.forEach(id => { document.getElementById(id).style.color = isAnomaly ? "#e74c3c" : "#ffffff"; });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: OBD-II Live WebSocket
+// ═══════════════════════════════════════════════════════════════
+let liveChartInstance = null;
+
+function toggleLive() {
+    if(liveConnected) disconnectLive();
+    else connectLive();
+}
+
+function connectLive() {
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    liveWS = new WebSocket(`${wsProto}//${window.location.host}/ws/obd-live`);
+    liveWS.onopen = () => {
+        liveConnected = true;
+        document.getElementById("liveBadge").className   = "live-badge live-on";
+        document.getElementById("liveDot").className     = "live-dot on";
+        document.getElementById("liveStatus").innerText  = "Live";
+        document.getElementById("liveBtn").innerText     = "Disconnect";
+
+        // Init live chart
+        if(liveChartInstance) liveChartInstance.destroy();
+        liveRiskHistory = [];
+        liveChartInstance = new Chart(document.getElementById("liveChart"), {
+            type: "line",
+            data: {
+                labels: [],
+                datasets: [{
+                    label: "Live Risk",
+                    data: [],
+                    borderColor: "#e74c3c",
+                    backgroundColor: "rgba(231,76,60,0.1)",
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                animation: false,
+                scales: {
+                    y: { min: 0, max: 1, grid: { color: "rgba(255,255,255,0.05)" } },
+                    x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    };
+
+    liveWS.onmessage = (event) => {
+        const d = JSON.parse(event.data);
+        // Update live cards
+        document.getElementById("lRPM").innerText     = d["Engine RPM"];
+        document.getElementById("lSpeed").innerText   = d["Vehicle Speed (km/h)"];
+        document.getElementById("lCoolant").innerText = d["Coolant Temp (°C)"];
+        document.getElementById("lMAP").innerText     = d["MAP (kPa)"];
+        document.getElementById("lBattery").innerText = d["Battery Voltage (V)"];
+        document.getElementById("lFuel").innerText    = d["Fuel Rail Pressure (bar)"];
+        document.getElementById("lThrottle").innerText= d["Throttle Position (%)"];
+
+        const riskEl = document.getElementById("lRisk");
+        riskEl.innerText  = d.live_risk;
+        riskEl.style.color = d.live_risk > 0.8 ? "#e74c3c" : d.live_risk > 0.5 ? "#f39c12" : "#2ecc71";
+
+        document.getElementById("liveRiskFill").style.width = (d.live_risk * 100) + "%";
+
+        // Rolling chart update (keep last 60 points)
+        liveRiskHistory.push(d.live_risk);
+        if(liveRiskHistory.length > 60) liveRiskHistory.shift();
+        liveChartInstance.data.labels = liveRiskHistory.map((_,i) => i);
+        liveChartInstance.data.datasets[0].data = [...liveRiskHistory];
+        liveChartInstance.update();
+    };
+
+    liveWS.onerror = () => {
+        alert("WebSocket error. Make sure FastAPI is running with WebSocket support.");
+        disconnectLive();
+    };
+    liveWS.onclose = () => disconnectLive();
+}
+
+function disconnectLive() {
+    if(liveWS) liveWS.close();
+    liveConnected = false;
+    document.getElementById("liveBadge").className  = "live-badge live-off";
+    document.getElementById("liveDot").className    = "live-dot off";
+    document.getElementById("liveStatus").innerText = "Disconnected";
+    document.getElementById("liveBtn").innerText    = "Connect Live";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: Multi-File Comparison
+// ═══════════════════════════════════════════════════════════════
+async function compareAnalyze() {
+    const files = document.getElementById("compareFiles").files;
+    if(files.length < 2) { alert("Select at least 2 CSV files to compare."); return; }
+
+    const formData = new FormData();
+    for(const f of files) formData.append("files", f);
+
+    let res;
+    try {
+        const r = await fetch("/compare", {method:"POST", body:formData});
+        res = await r.json();
+    } catch(e) {
+        alert("❌ Cannot reach backend."); return;
+    }
+    if(res.error) { alert("Error: " + res.error); return; }
+
+    const data = res.comparison;
+    document.getElementById("compareCount").style.display = "inline";
+    document.getElementById("compareCount").innerText = files.length + " files compared";
+
+    // Bar chart: risk per file
+    if(compareChart) compareChart.destroy();
+    document.getElementById("compareChart").style.display = "block";
+    compareChart = new Chart(document.getElementById("compareChart"), {
+        type: "bar",
+        data: {
+            labels: data.map(d => d.file),
+            datasets: [
+                {
+                    label: "Risk Score",
+                    data: data.map(d => d.risk),
+                    backgroundColor: data.map(d =>
+                        d.risk > 0.8 ? "rgba(231,76,60,0.7)" :
+                        d.risk > 0.5 ? "rgba(243,156,18,0.7)" : "rgba(46,204,113,0.7)"),
+                    borderRadius: 6
+                },
+                {
+                    label: "Driver Score / 100",
+                    data: data.map(d => d.driver_score / 100),
+                    backgroundColor: "rgba(0,210,255,0.4)",
+                    borderRadius: 6
+                }
+            ]
+        },
+        options: {
+            scales: {
+                y: { min: 0, max: 1, grid: { color: "rgba(255,255,255,0.05)" } },
+                x: { grid: { display: false } }
+            },
+            plugins: { legend: { labels: { color: "#fff" } } }
+        }
+    });
+
+    // Table
+    document.getElementById("compareTable").style.display = "table";
+    const tbody = document.getElementById("compareBody");
+    tbody.innerHTML = "";
+    data.forEach(d => {
+        if(d.error) { tbody.innerHTML += `<tr><td>${d.file}</td><td colspan="5" class="critical">ERROR: ${d.error}</td></tr>`; return; }
+        const cls = d.status === "CRITICAL" ? "critical" : d.status === "WARNING" ? "warning-status" : "safe";
+        const worstRUL = d.rul_snapshot ?
+            Object.entries(d.rul_snapshot).sort((a,b)=>a[1]-b[1])[0] : null;
+        tbody.innerHTML += `
+            <tr>
+                <td>${d.file}</td>
+                <td style="font-weight:700;">${d.risk}</td>
+                <td class="${cls}">${d.status}</td>
+                <td>${d.driver_score} — ${d.driver_grade}</td>
+                <td>${worstRUL ? worstRUL[0] + ": " + worstRUL[1] + " days" : "—"}</td>
+                <td>${d.ambient_temp}°C</td>
+            </tr>`;
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXISTING: Climate Impact Renderer (unchanged)
+// ═══════════════════════════════════════════════════════════════
+function renderClimateImpact(data) {
+    const ea = data.extreme_analysis, cs = data.contribution_split;
+    document.getElementById("climateImpactSection").style.display = "block";
+    const badge = document.getElementById("conditionBadge");
+    if(ea.condition === "desert_heat") { badge.textContent = "🔥 Desert Heat Detected"; badge.className = "condition-badge badge-desert"; }
+    else if(ea.condition === "cold_snow") { badge.textContent = "❄️ Cold / Snow Detected"; badge.className = "condition-badge badge-cold"; }
+    else { badge.textContent = "✅ Normal Operating Conditions"; badge.className = "condition-badge badge-normal"; }
+
+    const ip = data.climate_impact_pct;
+    const ck = document.getElementById("ckClimateImpact");
+    ck.textContent = (ip >= 0 ? "+" : "") + ip + "%";
+    ck.style.color  = ip > 30 ? "#e74c3c" : ip > 10 ? "#f39c12" : "#2ecc71";
+    document.getElementById("ckStressMult").textContent = ea.combined_stress_multiplier + "×";
+    const wr = ea.adjusted_risk_under_condition;
+    const cw = document.getElementById("ckWorstRisk");
+    cw.textContent = (wr * 100).toFixed(1) + "%";
+    cw.style.color  = wr > 0.8 ? "#e74c3c" : wr > 0.5 ? "#f39c12" : "#2ecc71";
+
+    document.getElementById("splitBarClimate").style.width  = cs.climate_share_pct + "%";
+    document.getElementById("splitBarInternal").style.width = cs.internal_share_pct + "%";
+    document.getElementById("splitClimateLabel").textContent  = "Climate: " + cs.climate_share_pct + "%";
+    document.getElementById("splitInternalLabel").textContent = "Internal Sensors: " + cs.internal_share_pct + "%";
+
+    const cb = document.getElementById("componentImpactBody");
+    cb.innerHTML = "";
+    for(const [comp, info] of Object.entries(ea.component_impact)) {
+        const p = info.risk_increase_pct;
+        const cls = p >= 70 ? "impact-high" : p >= 40 ? "impact-medium" : "impact-low";
+        const lbl = p >= 70 ? "HIGH" : p >= 40 ? "MEDIUM" : "Low";
+        cb.innerHTML += `<tr><td>${comp}</td><td class="${cls}">+${p}%</td><td class="${cls}">${lbl}</td><td style="color:var(--text-gray);font-size:13px;">${info.reason}</td></tr>`;
+    }
+    const sb = document.getElementById("sensorShiftBody");
+    sb.innerHTML = "";
+    for(const [sensor, shift] of Object.entries(ea.internal_sensor_shift)) {
+        const dc = shift.startsWith("+") ? "shift-positive" : shift.startsWith("-") ? "shift-negative" : "shift-neutral";
+        const dl = shift.startsWith("+") ? "↑ Increase" : shift.startsWith("-") ? "↓ Decrease" : "~ Stable";
+        sb.innerHTML += `<tr><td>${sensor}</td><td class="${dc}" style="font-family:monospace;font-size:13px;">${shift}</td><td class="${dc}">${dl}</td></tr>`;
+    }
+    const oi = ea.overall_risk_increase_pct;
+    document.getElementById("physicsBreakdown").innerHTML =
+        `<b>Active Condition:</b> ${ea.condition_label} &nbsp;|&nbsp;
+         <b>Arrhenius Factor:</b> ${ea.arrhenius_multiplier}× &nbsp;|&nbsp;
+         <b>Peck Factor:</b> ${ea.peck_multiplier}×<br>
+         <b>Combined Multiplier:</b> ${ea.combined_stress_multiplier}× (60% thermal + 40% humidity)<br>
+         <b>Net Climate Risk Increase:</b>
+         <span style="color:${oi>30?'#e74c3c':oi>10?'#f39c12':'#2ecc71'};font-weight:700;">+${oi}%</span>
+         — external climate accounts for
+         <span style="color:#00d2ff;font-weight:700;">${cs.climate_share_pct}%</span> of total risk.`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXISTING: Chart builders
+// ═══════════════════════════════════════════════════════════════
+function buildRiskChart(labels, series) {
+    if(riskChart) riskChart.destroy();
+    riskChart = new Chart(document.getElementById("riskChart"), {
+        type:"line", data:{ labels, datasets:[{ label:"Risk Score", data:series, borderColor:"#00d2ff", backgroundColor:"rgba(0,210,255,0.1)", tension:0.4, fill:true, borderWidth:3, pointRadius:0 }]},
+        options:{ scales:{ y:{ grid:{color:"rgba(255,255,255,0.05)"}, min:0, max:1 }, x:{ grid:{display:false} } } }
+    });
+}
+function buildSensorChart(severity) {
+    lastSeverityData = severity;
+    // Populate dropdown with all sensors from severity data
+    const dd = document.getElementById('sensorDropdown');
+    dd.innerHTML = '<option value="">— Overview (All Sensors) —</option>';
+    Object.keys(severity).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s; opt.textContent = s;
+        dd.appendChild(opt);
+    });
+    showSensorOverview(severity);
+}
+
+function showSensorOverview(severity) {
+    document.getElementById('sensorChartLabel').innerText = 'All Sensors — Severity Overview (% contribution to risk)';
+    if (sensorChart) sensorChart.destroy();
+    sensorChart = new Chart(document.getElementById('sensorChart'), {
+        type: 'bar',
+        data: {
+            labels: Object.keys(severity),
+            datasets: [{ label: 'Severity %', data: Object.values(severity),
+                backgroundColor: Object.values(severity).map(v =>
+                    v > 35 ? 'rgba(231,76,60,0.7)' : v > 20 ? 'rgba(243,156,18,0.7)' : 'rgba(46,204,113,0.7)'),
+                borderRadius: 6 }]
+        },
+        options: {
+            indexAxis: 'y',
+            scales: {
+                x: { min:0, max:100, grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' } },
+                y: { grid:{ display:false }, ticks:{ color:'#aab8c2', font:{ size:11 } } }
+            },
+            plugins: { legend:{ display:false } }
+        }
+    });
+    if (sensorComponentChartInst) { sensorComponentChartInst.destroy(); sensorComponentChartInst = null; }
+    document.getElementById('sensorComponentChart').style.display = 'none';
+    document.getElementById('sensorComponentList').innerHTML =
+        '<div style="color:var(--text-gray);font-size:13px;padding:10px 0;">Select a sensor from the dropdown to see its timeline and affected components.</div>';
+}
+
+function onSensorSelect() {
+    const sensor = document.getElementById('sensorDropdown').value;
+    if (!sensor) { showSensorOverview(lastSeverityData); return; }
+    if (!lastScrubberData) return;
+    const sd = lastScrubberData;
+    const sensorVals = sd.sensors[sensor];
+    if (!sensorVals) return;
+
+    const mapping = SENSOR_COMPONENT_MAP[sensor] || { color:'#00d2ff', components:[], impact:[] };
+    document.getElementById('sensorChartLabel').innerText = sensor + ' — Performance Over Time';
+    if (sensorChart) sensorChart.destroy();
+    sensorChart = new Chart(document.getElementById('sensorChart'), {
+        type: 'line',
+        data: {
+            labels: sd.timestamps,
+            datasets: [{ label: sensor, data: sensorVals,
+                borderColor: mapping.color, backgroundColor: mapping.color + '22',
+                fill:true, tension:0.4, pointRadius:0, borderWidth:2 }]
+        },
+        options: {
+            animation: false,
+            scales: {
+                x: { grid:{ display:false }, ticks:{ maxTicksLimit:10, color:'#aab8c2' } },
+                y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' } }
+            },
+            plugins: { legend:{ labels:{ color:'#fff' } } }
+        }
+    });
+
+    const cCanvas = document.getElementById('sensorComponentChart');
+    if (mapping.components.length > 0) {
+        cCanvas.style.display = 'block';
+        if (sensorComponentChartInst) sensorComponentChartInst.destroy();
+        sensorComponentChartInst = new Chart(cCanvas, {
+            type: 'bar',
+            data: {
+                labels: mapping.components,
+                datasets: [{ label:'Impact Level', data: mapping.impact,
+                    backgroundColor: ['rgba(231,76,60,0.7)','rgba(243,156,18,0.7)','rgba(0,210,255,0.7)'],
+                    borderRadius: 6 }]
+            },
+            options: {
+                indexAxis: 'y',
+                scales: {
+                    x: { min:0, max:100, grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' } },
+                    y: { grid:{ display:false }, ticks:{ color:'#aab8c2' } }
+                },
+                plugins: { legend:{ display:false } }
+            }
+        });
+        document.getElementById('sensorComponentList').innerHTML = mapping.components.map((c, i) =>
+            `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13px;">
+                <span style="color:#d1d1d1;">${c}</span>
+                <span style="color:${i===0?'#e74c3c':i===1?'#f39c12':'#00d2ff'};font-weight:600;">${mapping.impact[i]}% impact</span>
+            </div>`).join('');
+    } else {
+        cCanvas.style.display = 'none';
+        document.getElementById('sensorComponentList').innerHTML =
+            '<div style="color:var(--text-gray);font-size:13px;">No component mapping for this sensor.</div>';
+    }
+}
+function buildComponentChart(comps) {
+    if(componentChart) componentChart.destroy();
+    componentChart = new Chart(document.getElementById("componentChart"), {
+        type:"line", data:{ labels:comps.map(x=>x[0]), datasets:[{ label:"Failure %", data:comps.map(x=>x[1]), borderColor:"#ff4d4d", backgroundColor:"rgba(255,77,77,0.2)", fill:true, tension:0.4, borderWidth:3, pointRadius:4 }] }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXISTING: loadHistory
+// ═══════════════════════════════════════════════════════════════
+async function loadHistory() {
+    const res = await fetch("/history");
+    const historyData = await res.json();
+    const table = document.querySelector("#historyTable tbody");
+    table.innerHTML = "";
+    let safe=0, warning=0, critical=0;
+    historyData.forEach(row => {
+        let cls = "safe";
+        if(row.status==="WARNING")  { cls="warning-status"; warning++; }
+        if(row.status==="CRITICAL") { cls="critical"; critical++; }
+        if(row.status==="SAFE") safe++;
+        table.innerHTML += `<tr><td>${row.upload_time}</td><td>${row.file_name}</td><td>${row.risk.toFixed(3)}</td><td class="${cls}">${row.status}</td><td>${row.root_causes}</td><td>${row.recommended_components}</td></tr>`;
+    });
+    if(riskDistributionChart) riskDistributionChart.destroy();
+    riskDistributionChart = new Chart(document.getElementById("riskDistributionChart"), {
+        type:"doughnut",
+        data:{ labels:["SAFE","WARNING","CRITICAL"], datasets:[{ data:[safe,warning,critical], backgroundColor:["#2ecc71","#f39c12","#e74c3c"], borderWidth:0 }] },
+        options:{ cutout:"75%", plugins:{ legend:{ position:"bottom", labels:{ color:"#fff" } } } }
+    });
+}
+
+function downloadReport() { html2pdf().from(document.body).save("vehicle_report.pdf"); }
+
+// ═══════════════════════════════════════════════════════════════
+// AUTH STATE
+// ═══════════════════════════════════════════════════════════════
+let authToken = null;
+let currentUser = null;
+let currentVehicleId = null;
+let authMode = 'login';
+
+function showAuthModal(mode) {
+    authMode = mode;
+    document.getElementById('authModal').style.display = 'flex';
+    document.getElementById('authModalTitle').innerText = mode === 'login' ? 'Login' : 'Create Account';
+    document.getElementById('authSubmitBtn').innerText = mode === 'login' ? 'Login' : 'Register';
+    document.getElementById('authEmail').style.display = mode === 'register' ? 'block' : 'none';
+    document.getElementById('authError').innerText = '';
+}
+
+function closeAuthModal() {
+    document.getElementById('authModal').style.display = 'none';
+}
+
+async function submitAuth() {
+    const username = document.getElementById('authUsername').value.trim();
+    const password = document.getElementById('authPassword').value;
+    const email    = document.getElementById('authEmail').value.trim();
+    if (!username || !password) { document.getElementById('authError').innerText = 'Username and password required'; return; }
+    const url  = authMode === 'login' ? '/auth/login' : '/auth/register';
+    const body = authMode === 'login' ? {username, password} : {username, password, email};
+    try {
+        const res  = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const data = await res.json();
+        if (!res.ok) { document.getElementById('authError').innerText = data.detail || 'Error'; return; }
+        authToken   = data.token;
+        currentUser = {id: data.user_id, username: data.username};
+        closeAuthModal();
+        updateAuthUI();
+    } catch(e) {
+        document.getElementById('authError').innerText = 'Cannot reach server';
+    }
+}
+
+function logout() {
+    authToken = null; currentUser = null; currentVehicleId = null;
+    updateAuthUI();
+}
+
+function updateAuthUI() {
+    const loggedIn = !!authToken;
+    document.getElementById('btnLogin').style.display    = loggedIn ? 'none' : 'inline-block';
+    document.getElementById('btnRegister').style.display = loggedIn ? 'none' : 'inline-block';
+    document.getElementById('btnLogout').style.display   = loggedIn ? 'inline-block' : 'none';
+    const greet = document.getElementById('userGreeting');
+    greet.style.display = loggedIn ? 'inline' : 'none';
+    greet.innerText = loggedIn ? `👋 ${currentUser.username}` : '';
+    if (loggedIn) loadVehicles();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VEHICLE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+async function loadVehicles() {
+    if (!authToken) return;
+    const res  = await fetch('/vehicles', {headers: {'Authorization': `Bearer ${authToken}`}});
+    const data = await res.json();
+    const sel  = document.getElementById('vehicleSelect');
+    sel.innerHTML = '<option value="">Select Vehicle</option>';
+    data.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = `${v.name} (${v.vehicle_type.replace('_',' ')})`;
+        opt.dataset.type = v.vehicle_type;
+        sel.appendChild(opt);
+    });
+}
+
+function onVehicleChange() {
+    const sel = document.getElementById('vehicleSelect');
+    currentVehicleId = sel.value || null;
+    if (currentVehicleId) loadMaintenanceLog();
+}
+
+function showAddVehicleModal() {
+    if (!authToken) { alert('Please login first.'); return; }
+    document.getElementById('addVehicleModal').style.display = 'flex';
+}
+
+async function submitAddVehicle() {
+    const name  = document.getElementById('vName').value.trim();
+    const vtype = document.getElementById('vType').value;
+    const make  = document.getElementById('vMake').value.trim();
+    const model = document.getElementById('vModel').value.trim();
+    const year  = document.getElementById('vYear').value;
+    if (!name) { document.getElementById('addVehicleError').innerText = 'Vehicle name required'; return; }
+    try {
+        const res  = await fetch('/vehicles', {
+            method: 'POST',
+            headers: {'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json'},
+            body: JSON.stringify({name, vehicle_type: vtype, make, model_name: model, year: year ? parseInt(year) : null})
+        });
+        const data = await res.json();
+        if (!res.ok) { document.getElementById('addVehicleError').innerText = data.detail; return; }
+        document.getElementById('addVehicleModal').style.display = 'none';
+        loadVehicles();
+    } catch(e) {
+        document.getElementById('addVehicleError').innerText = 'Error adding vehicle';
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAINTENANCE LOG
+// ═══════════════════════════════════════════════════════════════
+// Local in-memory service log — no login or vehicle needed
+const localServiceLog = {};
+
+function logMaintenance(component) {
+    const today = new Date().toISOString().split('T')[0];
+    const notes = prompt(`Notes for ${component} service (optional):`, '') ;
+    if (notes === null) return; // user pressed Cancel
+
+    // Store locally
+    localServiceLog[component] = { service_date: today, notes: notes || '' };
+
+    // Visually reset that RUL row to HEALTHY
+    const rows = document.querySelectorAll('#rulBody tr');
+    rows.forEach(row => {
+        if (row.cells[0] && row.cells[0].innerText === component) {
+            row.cells[1].innerText = '— Serviced';
+            row.cells[2].innerText = '✅ SERVICED';
+            row.cells[2].className = 'safe';
+            row.cells[3].querySelector('.rul-bar').style.width = '100%';
+            row.cells[3].querySelector('.rul-bar').style.background = '#2ecc71';
+            row.cells[4].innerHTML = `<span style="font-size:11px;color:var(--text-gray);">Logged ${today}</span>`;
+        }
+    });
+
+    // Update maintenance log table
+    updateLocalMaintenanceTable();
+}
+
+function updateLocalMaintenanceTable() {
+    const tbody = document.getElementById('maintLogBody');
+    const empty = document.getElementById('maintLogEmpty');
+    const table = document.getElementById('maintLogTable');
+    const entries = Object.entries(localServiceLog);
+    if (!entries.length) {
+        table.style.display = 'none';
+        empty.style.display = 'block';
+        return;
+    }
+    table.style.display = 'table';
+    empty.style.display = 'none';
+    tbody.innerHTML = entries.map(([comp, r]) => `
+        <tr>
+            <td>${comp}</td>
+            <td>${r.service_date}</td>
+            <td style="color:var(--text-gray);">${r.notes || '—'}</td>
+        </tr>`).join('');
+}
+
+async function loadMaintenanceLog() {
+    if (!authToken || !currentVehicleId) return;
+    try {
+        const res  = await fetch(`/maintenance/history/${currentVehicleId}`, {
+            headers: {'Authorization': `Bearer ${authToken}`}
+        });
+        const data = await res.json();
+        const tbody = document.getElementById('maintLogBody');
+        const empty = document.getElementById('maintLogEmpty');
+        const table = document.getElementById('maintLogTable');
+        if (!data.length) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            return;
+        }
+        table.style.display = 'table';
+        empty.style.display = 'none';
+        tbody.innerHTML = data.map(r => `
+            <tr>
+                <td>${r.component}</td>
+                <td>${r.service_date}</td>
+                <td style="color:var(--text-gray);">${r.notes || '—'}</td>
+            </tr>`).join('');
+    } catch(e) {}
+}
+
+// Patched analyze — sends auth token if logged in, works fine without login too
+const _patchedAnalyze = async function() {
+    const file = document.getElementById("file").files[0];
+    if(!file) { alert("Upload CSV"); return; }
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+    let data;
+    try {
+        const res = await fetch("/predict", {method:"POST", body:formData, headers});
+        data = await res.json();
+    } catch(err) {
+        alert("❌ Cannot reach backend. Please check your connection.");
+        return;
+    }
+    if(data.error) { alert("❌ Backend error:\n\n" + data.error); return; }
+    if(data.risk === undefined) { alert("❌ Unexpected response. Check console (F12)."); return; }
+
+    // Show vehicle profile badge if available
+    if (data.vehicle_profile) {
+        document.title = `${data.vehicle_profile.label} — Vehicle Predictive Maintenance`;
+    }
+
+    // ── Existing KPI
+    document.getElementById("riskCard").innerText   = data.risk;
+    document.getElementById("ttfCard").innerText    = data.time_to_fault;
+    const health = ((1 - data.risk) * 100).toFixed(0);
+    document.getElementById("healthScore").innerText = health + "/100";
+    const hc = document.getElementById("healthCardContainer");
+    hc.style.background = health < 20 ? "var(--danger-red)" : health < 50 ? "var(--warning-amber)" : "var(--accent-orange)";
+    if(data.recommended_components.length > 0)
+        document.getElementById("topComponent").innerText = data.recommended_components[0][0];
+
+    // ── Existing AI Insight
+    document.getElementById("aiInsight").innerText =
+        `Climate Impact: +${data.climate_stress_pct}% due to environmental factors. ` +
+        `Est. Ambient Temp: ${data.ambient_temp}°C. ` +
+        `Primary concern: ${data.recommended_components[0]?.[0] || "N/A"}. ` +
+        `Root cause likely: ${data.root_causes[0]}. Recommended inspection required.`;
+
+    if(data.swot) {
+        document.getElementById("swotBox").innerHTML =
+            `<b>Strengths:</b> ${data.swot.strengths.join(", ")}<br>` +
+            `<b>Weaknesses:</b> ${data.swot.weaknesses.join(", ")}<br>` +
+            `<b>Opportunities:</b> ${data.swot.opportunities.join(", ")}<br>` +
+            `<b>Threats:</b> ${data.swot.threats.join(", ")}`;
+    }
+
+    // ── Alert chips
+    if(data.alert_sent) {
+        document.getElementById("alertRow").style.display = "flex";
+        setAlertChip("alertWhatsapp", data.alert_sent.whatsapp, "📱 WhatsApp");
+        setAlertChip("alertEmail",    data.alert_sent.email,    "📧 Email");
+    }
+
+    // ── Existing Charts
+    buildRiskChart(data.time_axis, data.risk_trend);
+    buildSensorChart(data.sensor_severity);
+    buildComponentChart(data.recommended_components);
+
+    // ── Maintenance Table
+    const maint = document.querySelector("#maintenanceTable tbody");
+    maint.innerHTML = "";
+    data.recommended_components.forEach((item, i) => {
+        const p = i===0 ? "High" : i===1 ? "Medium" : "Low";
+        const a = i===0 ? "Immediate Inspection" : i===1 ? "Schedule Maintenance" : "Monitor";
+        maint.innerHTML += `<tr><td class="${p.toLowerCase()}">${p}</td><td>${item[0]}</td><td>${item[1]}%</td><td>${a}</td></tr>`;
+    });
+
+    // ── Climate Impact (existing)
+    if(data.extreme_analysis && data.contribution_split)
+        renderClimateImpact(data);
+
+    if(data.driver_behavior) renderDriverBehavior(data.driver_behavior);
+    if(data.rul) renderRUL(data.rul);
+    if(data.scrubber) initScrubber(data.scrubber);
+
+    loadHistory();
+    if (currentVehicleId) loadMaintenanceLog();
+};
+
+// Override the global analyze function
+window.analyze = _patchedAnalyze;
+
+window.onload = loadHistory;
+</script>
+</body>
+</html>
