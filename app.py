@@ -105,15 +105,20 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST     = os.getenv("DB_HOST", "localhost")
 DB_PORT     = os.getenv("DB_PORT", "5432")
 
-conn = psycopg2.connect(
-    dbname=DB_NAME,
-    user=DB_USER,
-    password=DB_PASSWORD if DB_PASSWORD else None,
-    host=DB_HOST,
-    port=DB_PORT
-)
-conn.autocommit = True   # prevents "transaction aborted" state from poisoning subsequent queries
-cursor = conn.cursor()
+try:
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD if DB_PASSWORD else None,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    conn.autocommit = True
+    cursor = conn.cursor()
+except Exception as e:
+    print(f"WARNING: Could not connect to database at startup: {e}")
+    conn = None
+    cursor = None
 
 def create_table_if_not_exists():
     cursor.execute("""
