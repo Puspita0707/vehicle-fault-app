@@ -13,4 +13,4 @@ bcrypt
 apscheduler
 pydantic
 requests
-scikit-learn
+scikit-learn==1.6.1
