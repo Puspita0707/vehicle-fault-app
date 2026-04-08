@@ -1056,22 +1056,46 @@ function onSensorSelect() {
 
     const mapping = SENSOR_COMPONENT_MAP[sensor] || { color:'#00d2ff', components:[], impact:[] };
     document.getElementById('sensorChartLabel').innerText = sensor + ' — Performance Over Time';
+
+    const smoothed = movingAverage(sensorVals, 50);
+    const mean = smoothed.reduce((a,b)=>a+b,0)/smoothed.length;
+    const std  = Math.sqrt(smoothed.map(x=>(x-mean)**2).reduce((a,b)=>a+b,0)/smoothed.length);
+    const upper = mean + 1.5*std;
+    const lower = mean - 1.5*std;
+    const n = smoothed.length;
+    const ptColors = smoothed.map(v => (v>upper||v<lower) ? '#e74c3c' : mapping.color);
+    const ptRadius = smoothed.map(v => (v>upper||v<lower) ? 4 : 0);
+
     if (sensorChart) sensorChart.destroy();
     sensorChart = new Chart(document.getElementById('sensorChart'), {
         type: 'line',
         data: {
             labels: sd.timestamps,
-            datasets: [{ label: sensor, data: movingAverage(sensorVals, 50),
-                borderColor: mapping.color, backgroundColor: mapping.color + '22',
-                fill:true, tension:0.4, pointRadius:0, borderWidth:2 }]
+            datasets: [
+                { label: sensor, data: smoothed,
+                  borderColor: mapping.color, backgroundColor: 'transparent',
+                  fill: false, tension:0.4, pointRadius: ptRadius,
+                  pointBackgroundColor: ptColors, borderWidth:2 },
+                { label: 'Upper Threshold', data: Array(n).fill(upper),
+                  borderColor:'rgba(231,76,60,0.6)', borderDash:[6,4], borderWidth:1.5,
+                  pointRadius:0, fill:'+1', backgroundColor:'rgba(0,210,255,0.06)' },
+                { label: 'Lower Threshold', data: Array(n).fill(lower),
+                  borderColor:'rgba(52,152,219,0.6)', borderDash:[6,4], borderWidth:1.5,
+                  pointRadius:0, fill:false },
+                { label: 'Avg', data: Array(n).fill(mean),
+                  borderColor:'rgba(255,255,255,0.25)', borderDash:[3,3], borderWidth:1,
+                  pointRadius:0, fill:false }
+            ]
         },
         options: {
             animation: false,
             scales: {
                 x: { grid:{ display:false }, ticks:{ maxTicksLimit:8, color:'#aab8c2' } },
-                y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' }, grace:'20%' }
+                y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' }, grace:'10%' }
             },
-            plugins: { legend:{ labels:{ color:'#fff' } } }
+            plugins: { legend:{ labels:{ color:'#aab8c2', font:{size:11},
+                filter: item => item.text !== 'Upper Threshold' && item.text !== 'Lower Threshold'
+            }}}
         }
     });
 
@@ -1158,13 +1182,14 @@ async function loadHistory() {
         const causeText = causes[0]?.trim() || '—';
         const moreC = causes.length > 1 ? `<span style="color:#aab8c2;font-size:11px;"> +${causes.length-1} more</span>` : '';
 
-        // Components — show as small pills, max 3
+        // Components — show as small pills, max 3, rest expandable
         const comps = row.recommended_components ? row.recommended_components.split(',') : [];
-        const compPills = comps.slice(0,3).map(c => {
-            const name = c.split('(')[0].trim();
-            return `<span style="display:inline-block;background:rgba(0,210,255,0.1);color:#00d2ff;border:1px solid rgba(0,210,255,0.2);border-radius:4px;padding:2px 7px;font-size:11px;margin:2px;">${name}</span>`;
-        }).join('');
-        const moreP = comps.length > 3 ? `<span style="font-size:11px;color:#aab8c2;"> +${comps.length-3}</span>` : '';
+        const pillStyle = `display:inline-block;background:rgba(0,210,255,0.1);color:#00d2ff;border:1px solid rgba(0,210,255,0.2);border-radius:4px;padding:2px 7px;font-size:11px;margin:2px;`;
+        const makePill = c => `<span style="${pillStyle}">${c.split('(')[0].trim()}</span>`;
+        const compPills = comps.slice(0,3).map(makePill).join('');
+        const rowId = 'r' + Math.random().toString(36).substr(2,8);
+        const extraPills = comps.slice(3).map(makePill).join('');
+        const moreP = comps.length > 3 ? `<span id="ex_${rowId}" style="display:none;">${extraPills}</span><span id="btn_${rowId}" onclick="toggleExtra('${rowId}',${comps.length-3})" style="font-size:11px;color:#00d2ff;cursor:pointer;text-decoration:underline;margin-left:3px;"> +${comps.length-3} more</span>` : '';
 
         table.innerHTML += `
             <tr>
@@ -1190,6 +1215,18 @@ async function loadHistory() {
 }
 
 function downloadReport() { html2pdf().from(document.body).save("vehicle_report.pdf"); }
+
+function toggleExtra(id, total) {
+    const ex = document.getElementById('ex_' + id);
+    const btn = document.getElementById('btn_' + id);
+    if (ex.style.display === 'none') {
+        ex.style.display = 'inline';
+        btn.textContent = ' ▲ less';
+    } else {
+        ex.style.display = 'none';
+        btn.textContent = ' +' + total + ' more';
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // AUTH STATE
