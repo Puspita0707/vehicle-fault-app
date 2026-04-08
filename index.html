@@ -134,6 +134,27 @@
         .compare-controls { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
         .compare-tag { background:rgba(0,210,255,0.1); border:1px solid rgba(0,210,255,0.2); color:var(--accent-cyan); padding:4px 10px; border-radius:6px; font-size:12px; }
 
+        /* ── FadeUp Scroll Animations ──────────────────────────────────── */
+        @keyframes fadeUp {
+            from { opacity:0; transform:translateY(28px); }
+            to   { opacity:1; transform:translateY(0); }
+        }
+        .fade-section {
+            opacity: 0;
+            transform: translateY(28px);
+        }
+        .fade-section.visible {
+            animation: fadeUp 0.55s cubic-bezier(0.22,0.61,0.36,1) forwards;
+        }
+
+        /* ── Breathing Room ─────────────────────────────────────────────── */
+        .dashboard-grid { gap: 32px; }
+        .box { padding: 32px; }
+        .kpi-grid { gap: 28px; margin-bottom: 36px; }
+        .kpi-card { padding: 28px; }
+        .controls { padding: 24px 28px; margin-bottom: 36px; }
+        h1 { margin-bottom: 40px; font-size: 2rem; letter-spacing: -0.5px; }
+
         /* ── NEW: Alert Status ─────────────────────────────────────────── */
         .alert-row { display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; }
         .alert-chip { padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; }
@@ -219,7 +240,7 @@
     <h1>Vehicle Predictive Maintenance Dashboard</h1>
 
     <!-- ═══════════════════ EXISTING KPI GRID ═══════════════════ -->
-    <div class="kpi-grid" id="sec-overview">
+    <div class="kpi-grid fade-section" id="sec-overview">
         <div class="kpi-card" id="healthCardContainer">
             <div class="kpi-title">Vehicle Health Score</div>
             <div class="kpi-value" id="healthScore">-</div>
@@ -239,7 +260,7 @@
     </div>
 
     <!-- ═══════════════════ EXISTING CONTROLS ═══════════════════ -->
-    <div class="controls" id="sec-upload">
+    <div class="controls fade-section" id="sec-upload">
         <select id="vehicleSelect" onchange="onVehicleChange()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;">
             <option value="">🚗 Select Vehicle</option>
         </select>
@@ -252,13 +273,13 @@
     <div class="dashboard-grid">
 
         <!-- ══ EXISTING: Risk Trend ══ -->
-        <div class="box full" id="sec-risk">
+        <div class="box full fade-section" id="sec-risk">
             <div class="section-title">Risk Trend</div>
             <canvas id="riskChart"></canvas>
         </div>
 
         <!-- ══ SENSOR PERFORMANCE: dropdown + timeline + component impact ══ -->
-        <div class="box full" id="sec-sensors">
+        <div class="box full fade-section" id="sec-sensors">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;">
                 <div class="section-title" style="margin-bottom:0;">Sensor Performance</div>
                 <select id="sensorDropdown" onchange="onSensorSelect()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;min-width:240px;">
@@ -279,7 +300,7 @@
         </div>
 
         <!-- ══ EXISTING: Component Failure Trend ══ -->
-        <div class="box" id="sec-components">
+        <div class="box fade-section" id="sec-components">
             <div class="section-title">Component Failure Trend</div>
             <canvas id="componentChart"></canvas>
         </div>
@@ -294,7 +315,7 @@
         </div>
 
         <!-- ══ EXISTING: AI Insight + SWOT ══ -->
-        <div class="box full" id="sec-insights">
+        <div class="box full fade-section" id="sec-insights">
             <div class="section-title">AI Maintenance Insight</div>
             <div class="insight" id="aiInsight">Upload data to generate maintenance insights.</div>
             <br>
@@ -426,7 +447,7 @@
         <!-- ══════════════════════════════════════════════════════════
              NEW 4: OBD-II Live Stream
         ══════════════════════════════════════════════════════════ -->
-        <div class="box full" id="sec-live">
+        <div class="box full fade-section" id="sec-live">
             <div class="section-title" style="display:flex;align-items:center;gap:12px;">
                 📡 OBD-II Live Stream (Simulated)
                 <span class="live-badge live-off" id="liveBadge">
@@ -458,7 +479,7 @@
         <!-- ══════════════════════════════════════════════════════════
              NEW 5: Multi-File Comparison
         ══════════════════════════════════════════════════════════ -->
-        <div class="box full" id="sec-compare">
+        <div class="box full fade-section" id="sec-compare">
             <div class="section-title">📊 Multi-Day / Multi-File Comparison</div>
             <div class="compare-controls">
                 <input type="file" id="compareFiles" multiple accept=".csv" style="color:#888;">
@@ -526,7 +547,7 @@
         </div>
 
         <!-- ══ EXISTING: History + Risk Distribution side by side ══ -->
-        <div class="box full" id="sec-history">
+        <div class="box full fade-section" id="sec-history">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
                 <div class="section-title" style="margin:0;">Vehicle Diagnostic History</div>
                 <div style="display:flex;gap:20px;align-items:center;">
@@ -1531,6 +1552,27 @@ function sidebarNav(e, el) {
     document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
     el.classList.add('active');
 }
+
+// ═══════════════════════════════════════════════════════════════
+// FADE-UP SCROLL ANIMATIONS
+// ═══════════════════════════════════════════════════════════════
+const _fadeObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry, i) => {
+        if (entry.isIntersecting) {
+            const el = entry.target;
+            const delay = parseFloat(el.dataset.delay || 0);
+            setTimeout(() => el.classList.add('visible'), delay);
+            _fadeObserver.unobserve(el);
+        }
+    });
+}, { threshold: 0.08 });
+
+window.addEventListener('load', () => {
+    document.querySelectorAll('.fade-section').forEach((el, i) => {
+        el.dataset.delay = (i % 3) * 80; // stagger siblings 0, 80, 160ms
+        _fadeObserver.observe(el);
+    });
+});
 
 // Auto-highlight sidebar link as user scrolls
 const _sectionIds = ['sec-overview','sec-upload','sec-risk','sec-sensors','sec-components',
