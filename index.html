@@ -1053,7 +1053,7 @@ function onSensorSelect() {
         type: 'line',
         data: {
             labels: sd.timestamps,
-            datasets: [{ label: sensor, data: movingAverage(sensorVals, 12),
+            datasets: [{ label: sensor, data: movingAverage(sensorVals, 30),
                 borderColor: mapping.color, backgroundColor: mapping.color + '22',
                 fill:true, tension:0.4, pointRadius:0, borderWidth:2 }]
         },
@@ -1102,7 +1102,15 @@ function onSensorSelect() {
 function buildComponentChart(comps) {
     if(componentChart) componentChart.destroy();
     componentChart = new Chart(document.getElementById("componentChart"), {
-        type:"line", data:{ labels:comps.map(x=>x[0]), datasets:[{ label:"Failure %", data:comps.map(x=>x[1]), borderColor:"#ff4d4d", backgroundColor:"rgba(255,77,77,0.2)", fill:true, tension:0.4, borderWidth:3, pointRadius:4 }] }
+        type:"line",
+        data:{ labels:comps.map(x=>x[0]), datasets:[{ label:"Failure %", data:comps.map(x=>x[1]), borderColor:"#ff4d4d", backgroundColor:"rgba(255,77,77,0.2)", fill:true, tension:0.4, borderWidth:3, pointRadius:5, pointBackgroundColor:"#ff4d4d" }] },
+        options:{
+            scales:{
+                x:{ grid:{ color:"rgba(255,255,255,0.05)" }, ticks:{ color:"#ffffff", font:{ size:12 }, maxRotation:30, minRotation:0 } },
+                y:{ grid:{ color:"rgba(255,255,255,0.05)" }, ticks:{ color:"#ffffff" } }
+            },
+            plugins:{ legend:{ labels:{ color:"#fff" } } }
+        }
     });
 }
 
