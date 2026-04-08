@@ -88,7 +88,11 @@ app.add_middleware(
 
 @app.get("/")
 def serve_frontend():
-    return FileResponse("index.html")
+    return FileResponse("index.html", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    })
 
 # -------------------------------
 # Load trained artifacts
