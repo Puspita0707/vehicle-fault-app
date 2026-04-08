@@ -16,9 +16,19 @@
             --danger-red: linear-gradient(135deg, #e74c3c, #c0392b);
             --warning-amber: linear-gradient(135deg, #f39c12, #d35400);
         }
-        body { margin:0; padding:30px; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg-dark); color:white; letter-spacing:0.5px; }
+        body { margin:0; padding:30px 30px 30px 250px; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg-dark); color:white; letter-spacing:0.5px; }
         .container { max-width:1600px; margin:auto; }
         h1 { text-align:center; margin-bottom:35px; font-weight:400; font-size:2.2rem; color:#ffffff; }
+
+        /* ── Sidebar ───────────────────────────────────────────── */
+        .sidebar { position:fixed; left:0; top:0; width:220px; height:100vh; background:#0e1a1f; border-right:1px solid rgba(255,255,255,0.06); z-index:200; display:flex; flex-direction:column; overflow-y:auto; }
+        .sidebar-logo { padding:20px 18px; border-bottom:1px solid rgba(255,255,255,0.06); font-size:14px; font-weight:700; color:#fff; letter-spacing:0.5px; display:flex; align-items:center; gap:8px; }
+        .sidebar-logo span { color:#00d2ff; }
+        .sidebar-section { padding:14px 18px 4px 18px; font-size:10px; text-transform:uppercase; letter-spacing:1.2px; color:#3a4a54; font-weight:600; }
+        .sidebar-link { display:flex; align-items:center; gap:10px; padding:9px 18px; font-size:12.5px; color:#7a8a94; text-decoration:none; cursor:pointer; transition:all 0.2s; border-left:3px solid transparent; }
+        .sidebar-link:hover { color:#ffffff; background:rgba(255,255,255,0.04); }
+        .sidebar-link.active { color:#00d2ff; border-left-color:#00d2ff; background:rgba(0,210,255,0.06); font-weight:600; }
+        .sidebar-icon { font-size:14px; flex-shrink:0; }
 
         .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:25px; margin-bottom:30px; }
         .kpi-card { background:var(--accent-orange); padding:25px; border-radius:16px; box-shadow:0 10px 30px rgba(243,95,61,0.25); transition:0.4s cubic-bezier(0.4,0,0.2,1); border:1px solid rgba(255,255,255,0.1); }
@@ -134,7 +144,7 @@
 </head>
 <body>
 <!-- ═══════════════ AUTH NAV BAR ═══════════════ -->
-<div id="authNav" style="background:#1e292e;padding:12px 30px;margin:-30px -30px 30px -30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07);">
+<div id="authNav" style="background:#1e292e;padding:12px 30px;margin:-30px -30px 30px -250px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07);">
     <div style="font-size:14px;color:#aab8c2;">🚗 Vehicle Predictive Maintenance</div>
     <div style="display:flex;align-items:center;gap:12px;" id="authControls">
         <span id="userGreeting" style="font-size:13px;color:#aab8c2;display:none;"></span>
@@ -182,11 +192,34 @@
     </div>
 </div>
 
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<nav class="sidebar" id="mainSidebar">
+    <div class="sidebar-logo">🚗 <span>Vehicle</span>AI</div>
+    <div class="sidebar-section">Overview</div>
+    <a class="sidebar-link active" href="#sec-overview" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📊</span> Dashboard KPIs</a>
+    <a class="sidebar-link" href="#sec-upload" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📁</span> Upload & Analyze</a>
+    <div class="sidebar-section">Analysis</div>
+    <a class="sidebar-link" href="#sec-risk" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📈</span> Risk Trend</a>
+    <a class="sidebar-link" href="#sec-sensors" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔌</span> Sensor Performance</a>
+    <a class="sidebar-link" href="#sec-components" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔧</span> Components</a>
+    <a class="sidebar-link" href="#sec-insights" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🤖</span> AI Insights</a>
+    <div class="sidebar-section">Diagnostics</div>
+    <a class="sidebar-link" href="#driverSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🚗</span> Driver Behavior</a>
+    <a class="sidebar-link" href="#rulSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">⏱</span> RUL</a>
+    <a class="sidebar-link" href="#scrubberSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔍</span> Anomaly Scrubber</a>
+    <div class="sidebar-section">Live & Compare</div>
+    <a class="sidebar-link" href="#sec-live" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📡</span> Live OBD-II</a>
+    <a class="sidebar-link" href="#sec-compare" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📊</span> Compare Files</a>
+    <a class="sidebar-link" href="#climateImpactSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🌡️</span> Climate Impact</a>
+    <div class="sidebar-section">Records</div>
+    <a class="sidebar-link" href="#sec-history" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📋</span> History</a>
+</nav>
+
 <div class="container">
     <h1>Vehicle Predictive Maintenance Dashboard</h1>
 
     <!-- ═══════════════════ EXISTING KPI GRID ═══════════════════ -->
-    <div class="kpi-grid">
+    <div class="kpi-grid" id="sec-overview">
         <div class="kpi-card" id="healthCardContainer">
             <div class="kpi-title">Vehicle Health Score</div>
             <div class="kpi-value" id="healthScore">-</div>
@@ -206,7 +239,7 @@
     </div>
 
     <!-- ═══════════════════ EXISTING CONTROLS ═══════════════════ -->
-    <div class="controls">
+    <div class="controls" id="sec-upload">
         <select id="vehicleSelect" onchange="onVehicleChange()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;">
             <option value="">🚗 Select Vehicle</option>
         </select>
@@ -219,13 +252,13 @@
     <div class="dashboard-grid">
 
         <!-- ══ EXISTING: Risk Trend ══ -->
-        <div class="box full">
+        <div class="box full" id="sec-risk">
             <div class="section-title">Risk Trend</div>
             <canvas id="riskChart"></canvas>
         </div>
 
         <!-- ══ SENSOR PERFORMANCE: dropdown + timeline + component impact ══ -->
-        <div class="box full">
+        <div class="box full" id="sec-sensors">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;">
                 <div class="section-title" style="margin-bottom:0;">Sensor Performance</div>
                 <select id="sensorDropdown" onchange="onSensorSelect()" style="background:#141e22;color:#aab8c2;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;min-width:240px;">
@@ -246,7 +279,7 @@
         </div>
 
         <!-- ══ EXISTING: Component Failure Trend ══ -->
-        <div class="box">
+        <div class="box" id="sec-components">
             <div class="section-title">Component Failure Trend</div>
             <canvas id="componentChart"></canvas>
         </div>
@@ -261,7 +294,7 @@
         </div>
 
         <!-- ══ EXISTING: AI Insight + SWOT ══ -->
-        <div class="box full">
+        <div class="box full" id="sec-insights">
             <div class="section-title">AI Maintenance Insight</div>
             <div class="insight" id="aiInsight">Upload data to generate maintenance insights.</div>
             <br>
@@ -392,7 +425,7 @@
         <!-- ══════════════════════════════════════════════════════════
              NEW 4: OBD-II Live Stream
         ══════════════════════════════════════════════════════════ -->
-        <div class="box full">
+        <div class="box full" id="sec-live">
             <div class="section-title" style="display:flex;align-items:center;gap:12px;">
                 📡 OBD-II Live Stream (Simulated)
                 <span class="live-badge live-off" id="liveBadge">
@@ -424,7 +457,7 @@
         <!-- ══════════════════════════════════════════════════════════
              NEW 5: Multi-File Comparison
         ══════════════════════════════════════════════════════════ -->
-        <div class="box full">
+        <div class="box full" id="sec-compare">
             <div class="section-title">📊 Multi-Day / Multi-File Comparison</div>
             <div class="compare-controls">
                 <input type="file" id="compareFiles" multiple accept=".csv" style="color:#888;">
@@ -492,7 +525,7 @@
         </div>
 
         <!-- ══ EXISTING: History + Risk Distribution side by side ══ -->
-        <div class="box">
+        <div class="box" id="sec-history">
             <div class="section-title">Vehicle Diagnostic History</div>
             <table id="historyTable">
                 <thead><tr><th>Date</th><th>File</th><th>Risk</th><th>Status</th><th>Root Causes</th><th>Recommended Components</th></tr></thead>
@@ -1020,7 +1053,7 @@ function onSensorSelect() {
         type: 'line',
         data: {
             labels: sd.timestamps,
-            datasets: [{ label: sensor, data: sensorVals,
+            datasets: [{ label: sensor, data: movingAverage(sensorVals, 12),
                 borderColor: mapping.color, backgroundColor: mapping.color + '22',
                 fill:true, tension:0.4, pointRadius:0, borderWidth:2 }]
         },
@@ -1290,6 +1323,7 @@ const _patchedAnalyze = async function() {
     if(!file) { alert("Upload CSV"); return; }
     const formData = new FormData();
     formData.append("file", file);
+    if (currentVehicleId) formData.append("vehicle_id", currentVehicleId);
 
     const headers = {};
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -1370,6 +1404,53 @@ const _patchedAnalyze = async function() {
 
 // Override the global analyze function
 window.analyze = _patchedAnalyze;
+
+// ═══════════════════════════════════════════════════════════════
+// CHART SMOOTHING: moving average to reduce sensor chart noise
+// ═══════════════════════════════════════════════════════════════
+function movingAverage(data, window = 12) {
+    return data.map((_, i) => {
+        const start = Math.max(0, i - window + 1);
+        const slice = data.slice(start, i + 1);
+        return slice.reduce((a, b) => a + b, 0) / slice.length;
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SIDEBAR NAVIGATION
+// ═══════════════════════════════════════════════════════════════
+function sidebarNav(e, el) {
+    e.preventDefault();
+    const href = el.getAttribute('href');
+    const target = document.querySelector(href);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+    el.classList.add('active');
+}
+
+// Auto-highlight sidebar link as user scrolls
+const _sectionIds = ['sec-overview','sec-upload','sec-risk','sec-sensors','sec-components',
+    'sec-insights','driverSection','rulSection','scrubberSection',
+    'sec-live','sec-compare','climateImpactSection','sec-history'];
+
+const _sectionObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const id = entry.target.id;
+            document.querySelectorAll('.sidebar-link').forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + id) link.classList.add('active');
+            });
+        }
+    });
+}, { rootMargin: '-15% 0px -75% 0px' });
+
+window.addEventListener('load', () => {
+    _sectionIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) _sectionObserver.observe(el);
+    });
+});
 
 window.onload = loadHistory;
 </script>
