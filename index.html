@@ -525,18 +525,25 @@
         </div>
 
         <!-- ══ EXISTING: History + Risk Distribution side by side ══ -->
-        <div class="box" id="sec-history">
-            <div class="section-title">Vehicle Diagnostic History</div>
-            <table id="historyTable">
-                <thead><tr><th>Date</th><th>File</th><th>Risk</th><th>Status</th><th>Root Causes</th><th>Recommended Components</th></tr></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-
-        <div class="box">
-            <div class="section-title">Risk Distribution</div>
-            <div style="max-width:280px;margin:auto;">
-                <canvas id="riskDistributionChart"></canvas>
+        <div class="box full" id="sec-history">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+                <div class="section-title" style="margin:0;">Vehicle Diagnostic History</div>
+                <div style="display:flex;gap:20px;align-items:center;">
+                    <div style="max-width:120px;"><canvas id="riskDistributionChart"></canvas></div>
+                    <div style="font-size:12px;color:var(--text-gray);line-height:2;">
+                        <div><span id="histSafe" style="color:#2ecc71;font-weight:700;">0</span> Safe</div>
+                        <div><span id="histWarning" style="color:#f39c12;font-weight:700;">0</span> Warning</div>
+                        <div><span id="histCritical" style="color:#e74c3c;font-weight:700;">0</span> Critical</div>
+                    </div>
+                </div>
+            </div>
+            <div style="max-height:320px;overflow-y:auto;border-radius:8px;">
+                <table id="historyTable" style="font-size:13px;">
+                    <thead style="position:sticky;top:0;background:#1e292e;z-index:1;">
+                        <tr><th>Date</th><th>File</th><th>Risk</th><th>Status</th><th>Root Causes</th><th>Top Components</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -1124,17 +1131,48 @@ async function loadHistory() {
     table.innerHTML = "";
     let safe=0, warning=0, critical=0;
     historyData.forEach(row => {
-        let cls = "safe";
-        if(row.status==="WARNING")  { cls="warning-status"; warning++; }
-        if(row.status==="CRITICAL") { cls="critical"; critical++; }
-        if(row.status==="SAFE") safe++;
-        table.innerHTML += `<tr><td>${row.upload_time}</td><td>${row.file_name}</td><td>${row.risk.toFixed(3)}</td><td class="${cls}">${row.status}</td><td>${row.root_causes}</td><td>${row.recommended_components}</td></tr>`;
+        let cls = "safe", badgeBg = "rgba(46,204,113,0.15)", badgeColor = "#2ecc71";
+        if(row.status==="WARNING")  { cls="warning-status"; warning++; badgeBg="rgba(243,156,18,0.15)"; badgeColor="#f39c12"; }
+        else if(row.status==="CRITICAL") { cls="critical"; critical++; badgeBg="rgba(231,76,60,0.15)"; badgeColor="#e74c3c"; }
+        else safe++;
+
+        // Truncate date
+        const date = row.upload_time.split(' ')[0];
+        const time = row.upload_time.split(' ')[1]?.substring(0,5) || '';
+
+        // Root causes — show first one + count
+        const causes = row.root_causes ? row.root_causes.split(',') : [];
+        const causeText = causes[0]?.trim() || '—';
+        const moreC = causes.length > 1 ? `<span style="color:#aab8c2;font-size:11px;"> +${causes.length-1} more</span>` : '';
+
+        // Components — show as small pills, max 3
+        const comps = row.recommended_components ? row.recommended_components.split(',') : [];
+        const compPills = comps.slice(0,3).map(c => {
+            const name = c.split('(')[0].trim();
+            return `<span style="display:inline-block;background:rgba(0,210,255,0.1);color:#00d2ff;border:1px solid rgba(0,210,255,0.2);border-radius:4px;padding:2px 7px;font-size:11px;margin:2px;">${name}</span>`;
+        }).join('');
+        const moreP = comps.length > 3 ? `<span style="font-size:11px;color:#aab8c2;"> +${comps.length-3}</span>` : '';
+
+        table.innerHTML += `
+            <tr>
+                <td style="white-space:nowrap;"><div style="font-weight:600;">${date}</div><div style="font-size:11px;color:#aab8c2;">${time}</div></td>
+                <td style="color:#00d2ff;font-weight:500;">${row.file_name}</td>
+                <td style="font-weight:700;font-size:15px;">${row.risk.toFixed(2)}</td>
+                <td><span style="padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;background:${badgeBg};color:${badgeColor};border:1px solid ${badgeColor};">${row.status}</span></td>
+                <td style="max-width:160px;">${causeText}${moreC}</td>
+                <td>${compPills}${moreP}</td>
+            </tr>`;
     });
+
+    document.getElementById('histSafe').textContent = safe;
+    document.getElementById('histWarning').textContent = warning;
+    document.getElementById('histCritical').textContent = critical;
+
     if(riskDistributionChart) riskDistributionChart.destroy();
     riskDistributionChart = new Chart(document.getElementById("riskDistributionChart"), {
         type:"doughnut",
         data:{ labels:["SAFE","WARNING","CRITICAL"], datasets:[{ data:[safe,warning,critical], backgroundColor:["#2ecc71","#f39c12","#e74c3c"], borderWidth:0 }] },
-        options:{ cutout:"75%", plugins:{ legend:{ position:"bottom", labels:{ color:"#fff" } } } }
+        options:{ cutout:"70%", plugins:{ legend:{ display:false } }, animation:{ duration:600 } }
     });
 }
 
