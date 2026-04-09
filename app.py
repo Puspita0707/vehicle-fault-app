@@ -273,9 +273,10 @@ def get_visual_crossing_weather(city, timestamp_str):
 # ================================================================
 def calculate_environmental_stress(df, actual_temp=None, actual_hum=None):
     recent = df.tail(30)
-    avg_coolant = float(recent["Coolant Temp (°C)"].mean())
+    # Safely handle CSVs that don't have these specific sensor columns
+    avg_coolant = float(recent["Coolant Temp (°C)"].mean()) if "Coolant Temp (°C)" in df.columns else 80.0
     v_temp = 25 + (max(0, avg_coolant - 85) * 0.5)
-    volts_std = float(recent["Battery Voltage (V)"].std())
+    volts_std = float(recent["Battery Voltage (V)"].std()) if "Battery Voltage (V)" in df.columns else 0.1
     v_hum = min(95, 40 + (volts_std * 100))
     final_temp = actual_temp if actual_temp is not None else float(v_temp)
     final_hum = actual_hum if actual_hum is not None else float(v_hum)
@@ -484,10 +485,14 @@ def detect_anomalies(df):
 
 def detect_root_cause(df):
     recent, causes = df.tail(30), []
-    if recent["Battery Voltage (V)"].std() > 0.4: causes.append("Battery / Charging System Issue")
-    if recent["Coolant Temp (°C)"].std() > 5: causes.append("Coolant Temperature Fluctuation")
-    if recent["MAP (kPa)"].std() > 8: causes.append("Manifold Pressure Instability (MAP)")
-    if recent["Fuel Rail Pressure (bar)"].mean() < 2.5: causes.append("Fuel Supply / Injector Pressure Drop")
+    if "Battery Voltage (V)" in df.columns and recent["Battery Voltage (V)"].std() > 0.4:
+        causes.append("Battery / Charging System Issue")
+    if "Coolant Temp (°C)" in df.columns and recent["Coolant Temp (°C)"].std() > 5:
+        causes.append("Coolant Temperature Fluctuation")
+    if "MAP (kPa)" in df.columns and recent["MAP (kPa)"].std() > 8:
+        causes.append("Manifold Pressure Instability (MAP)")
+    if "Fuel Rail Pressure (bar)" in df.columns and recent["Fuel Rail Pressure (bar)"].mean() < 2.5:
+        causes.append("Fuel Supply / Injector Pressure Drop")
     return causes if causes else ["No dominant sensor anomaly detected"]
 
 def compute_sensor_severity(df):
