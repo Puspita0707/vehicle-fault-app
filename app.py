@@ -393,6 +393,71 @@ def compute_climate_vs_internal_split(base_risk, final_risk, sensor_severity):
     }
 
 # ================================================================
+# DYNAMIC COLUMN NORMALIZATION
+# Maps real-world CSV column name variants → internal standard names
+# so the dashboard works with ANY vehicle's exported data
+# ================================================================
+COLUMN_ALIASES = {
+    # Throttle / Accelerator
+    "Accelerator Pedal Position (%)":        "Throttle Position (%)",
+    "Accelerator Position (%)":              "Throttle Position (%)",
+    "Pedal Position (%)":                    "Throttle Position (%)",
+    "Throttle Pos (%)":                      "Throttle Position (%)",
+    # Coolant temperature
+    "Coolant Temperature Raw":               "Coolant Temp (°C)",
+    "Coolant Temperature (°C)":              "Coolant Temp (°C)",
+    "Engine Coolant Temperature":            "Coolant Temp (°C)",
+    "ECT (°C)":                              "Coolant Temp (°C)",
+    "Coolant Temp":                          "Coolant Temp (°C)",
+    # Engine RPM
+    "RPM":                                   "Engine RPM",
+    "Engine Speed (RPM)":                    "Engine RPM",
+    "Engine Speed":                          "Engine RPM",
+    "Crankshaft Speed (RPM)":               "Engine RPM",
+    "Motor Speed (RPM)":                     "Engine RPM",
+    # Vehicle speed
+    "Speed (km/h)":                          "Vehicle Speed (km/h)",
+    "Vehicle Speed":                         "Vehicle Speed (km/h)",
+    "GPS Speed (km/h)":                      "Vehicle Speed (km/h)",
+    "Speed":                                 "Vehicle Speed (km/h)",
+    # MAP / Boost pressure (approximate mapping)
+    "Boost Pressure (mV)":                   "MAP (kPa)",
+    "Manifold Pressure (kPa)":              "MAP (kPa)",
+    "Intake Manifold Pressure (kPa)":       "MAP (kPa)",
+    "MAP":                                   "MAP (kPa)",
+    "Boost Pressure (kPa)":                 "MAP (kPa)",
+    # Battery / voltage
+    "Battery Voltage":                       "Battery Voltage (V)",
+    "Voltage (V)":                           "Battery Voltage (V)",
+    "System Voltage (V)":                    "Battery Voltage (V)",
+    # Fuel pressure
+    "Fuel Pressure (kPa)":                   "Fuel Rail Pressure (bar)",
+    "Fuel Rail Pressure (kPa)":             "Fuel Rail Pressure (bar)",
+    "Fuel Pressure":                         "Fuel Rail Pressure (bar)",
+    # Timestamp
+    "Timestamp":                             "Timestamp (s)",
+    "Time (s)":                              "Timestamp (s)",
+    "Time":                                  "Timestamp (s)",
+}
+
+def normalize_columns(df):
+    """
+    Rename incoming CSV columns to internal standard names where aliases match.
+    Un-matched columns are left as-is — they'll still appear in the sensor dropdown.
+    """
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+    rename_map = {}
+    for col in df.columns:
+        if col in COLUMN_ALIASES:
+            target = COLUMN_ALIASES[col]
+            if target not in df.columns:   # don't overwrite if target already exists
+                rename_map[col] = target
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
+# ================================================================
 # EXISTING: Core helpers (unchanged)
 # ================================================================
 def classify_risk_dynamic(risk, risk_series):
@@ -404,10 +469,12 @@ def classify_risk_dynamic(risk, risk_series):
 def build_features(df):
     win = 10
     out = pd.DataFrame(index=df.index)
-    out["MAP (kPa)_std"] = df["MAP (kPa)"].rolling(win).std()
-    out["Coolant Temp (°C)_std"] = df["Coolant Temp (°C)"].rolling(win).std()
-    out["Battery Voltage (V)_std"] = df["Battery Voltage (V)"].rolling(win).std()
-    out["Fuel Rail Pressure (bar)_mean"] = df["Fuel Rail Pressure (bar)"].rolling(win).mean()
+    # Only build features for columns that exist — returns NaN columns for missing ones
+    # (dropna() in the caller will then exclude those rows, returning empty for new CSVs)
+    out["MAP (kPa)_std"] = df["MAP (kPa)"].rolling(win).std() if "MAP (kPa)" in df.columns else np.nan
+    out["Coolant Temp (°C)_std"] = df["Coolant Temp (°C)"].rolling(win).std() if "Coolant Temp (°C)" in df.columns else np.nan
+    out["Battery Voltage (V)_std"] = df["Battery Voltage (V)"].rolling(win).std() if "Battery Voltage (V)" in df.columns else np.nan
+    out["Fuel Rail Pressure (bar)_mean"] = df["Fuel Rail Pressure (bar)"].rolling(win).mean() if "Fuel Rail Pressure (bar)" in df.columns else np.nan
     return out
 
 def detect_anomalies(df):
@@ -426,6 +493,7 @@ def detect_root_cause(df):
 def compute_sensor_severity(df):
     recent = df.tail(30)
     scores = {}
+    # --- Known sensors with calibrated thresholds ---
     if "Battery Voltage (V)" in df.columns:
         scores["Battery Voltage (V)"] = recent["Battery Voltage (V)"].std() / 0.4
     if "Coolant Temp (°C)" in df.columns:
@@ -440,6 +508,16 @@ def compute_sensor_severity(df):
         scores["Vehicle Speed (km/h)"] = min(1.0, recent["Vehicle Speed (km/h)"].std() / 30)
     if "Throttle Position (%)" in df.columns:
         scores["Throttle Position (%)"] = min(1.0, recent["Throttle Position (%)"].std() / 20)
+    # --- Generic fallback: coefficient of variation for any unrecognised numeric column ---
+    # This makes the dashboard work with ANY vehicle's CSV regardless of column names
+    exclude_cols = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    for col in numeric_cols:
+        if col not in scores and col not in exclude_cols:
+            col_mean = abs(recent[col].mean()) + 1e-6
+            col_std  = recent[col].std()
+            # Coefficient of variation capped at 1.0 — works universally
+            scores[col] = min(1.0, col_std / col_mean)
     total = sum(scores.values())
     return {k: round((v / total) * 100, 1) if total > 0 else 0 for k, v in scores.items()}
 
@@ -664,33 +742,46 @@ def compute_rul_per_component(df, wear_multiplier=1.0, last_serviced=None):
 # ================================================================
 def build_scrubber_data(df):
     """
-    Returns lightweight per-row data for the frontend timeline scrubber.
-    Includes: timestamp, key sensors, anomaly flag per row.
+    Returns per-row sensor data for the frontend timeline + sensor chart.
+    Includes ALL numeric columns — works with any vehicle CSV regardless of column names.
+    Standard sensors are listed first; unrecognised columns are appended after.
     """
-    sensors = ["Coolant Temp (°C)", "MAP (kPa)", "Battery Voltage (V)",
-               "Fuel Rail Pressure (bar)", "Engine RPM", "Vehicle Speed (km/h)",
-               "Throttle Position (%)"]
-    available = [s for s in sensors if s in df.columns]
+    standard = ["Coolant Temp (°C)", "MAP (kPa)", "Battery Voltage (V)",
+                "Fuel Rail Pressure (bar)", "Engine RPM", "Vehicle Speed (km/h)",
+                "Throttle Position (%)"]
+    exclude  = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
 
-    # Z-score anomaly flag per row
-    numeric = df[available].copy()
-    z = (numeric - numeric.mean()) / (numeric.std() + 1e-6)
-    anomaly_flag = (z.abs() > 2.5).any(axis=1).astype(int).tolist()
+    # All numeric columns in the dataframe
+    all_numeric = df.select_dtypes(include=[np.number]).columns.tolist()
+    all_numeric = [c for c in all_numeric if c not in exclude]
+
+    # Standard sensors first (if present), then any extra columns
+    available = [s for s in standard if s in all_numeric]
+    for c in all_numeric:
+        if c not in available:
+            available.append(c)
+
+    # Z-score anomaly flag per row (across all available sensors)
+    if available:
+        numeric = df[available].copy()
+        z = (numeric - numeric.mean()) / (numeric.std() + 1e-6)
+        anomaly_flag = (z.abs() > 2.5).any(axis=1).astype(int).tolist()
+    else:
+        anomaly_flag = [0] * len(df)
 
     # Downsample to max 500 points for frontend performance
-    step = max(1, len(df) // 500)
+    step    = max(1, len(df) // 500)
     indices = list(range(0, len(df), step))
 
-    timestamps = []
     if "Timestamp (s)" in df.columns:
         timestamps = [round(float(df["Timestamp (s)"].iloc[i]), 1) for i in indices]
     else:
         timestamps = list(range(len(indices)))
 
     result = {
-        "timestamps": timestamps,
+        "timestamps":    timestamps,
         "anomaly_flags": [anomaly_flag[i] for i in indices],
-        "sensors": {}
+        "sensors":       {}
     }
     for sensor in available:
         result["sensors"][sensor] = [round(float(df[sensor].iloc[i]), 2) for i in indices]
@@ -1159,17 +1250,29 @@ async def predict(
         contents = await file.read()
         df = pd.read_csv(BytesIO(contents))
         df.columns = df.columns.str.strip()
+        # Auto-map real-world column name variants to internal standard names
+        df = normalize_columns(df)
         user_id = get_current_user(credentials) if credentials else None
         # CSV stores Fuel Rail Pressure in kPa despite column name saying "bar" — convert to real bar
         if "Fuel Rail Pressure (bar)" in df.columns:
             df["Fuel Rail Pressure (bar)"] = df["Fuel Rail Pressure (bar)"] / 100.0
 
         X_raw = build_features(df).dropna()
+        # If this CSV doesn't have the 4 ML model columns (e.g. a new vehicle format),
+        # fall back to a generic risk estimate so the sensor charts still work
         if len(X_raw) < 5:
-            return {"status": "INSUFFICIENT_DATA"}
-
-        risk_series = model.predict(X_raw[model_features])
-        base_risk   = float(risk_series[-1])
+            # Generic risk: mean z-score magnitude across all numeric cols
+            num_df = df.select_dtypes(include=[np.number])
+            if num_df.shape[1] > 0:
+                z_all = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
+                generic_risk = float(np.clip(z_all.abs().mean().mean() / 3.0, 0.05, 0.95))
+            else:
+                generic_risk = 0.5
+            risk_series = np.array([generic_risk])
+            base_risk   = generic_risk
+        else:
+            risk_series = model.predict(X_raw[model_features])
+            base_risk   = float(risk_series[-1])
 
         actual_temp, actual_hum = get_visual_crossing_weather(city, timestamp)
         stress_mult, final_t, final_h, warnings = calculate_environmental_stress(df, actual_temp, actual_hum)

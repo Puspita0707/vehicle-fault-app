@@ -769,6 +769,22 @@ function initScrubber(sd) {
     slider.value = sd.timestamps.length - 1;
     updateScrubber(sd.timestamps.length - 1);
     slider.oninput = () => updateScrubber(parseInt(slider.value));
+
+    // Ensure sensor dropdown shows ALL columns from this CSV
+    // (the backend now sends every numeric column regardless of name)
+    const dd = document.getElementById('sensorDropdown');
+    const alreadyListed = new Set(
+        Array.from(dd.options).map(o => o.value).filter(v => v !== '')
+    );
+    if (sd.sensors) {
+        Object.keys(sd.sensors).forEach(s => {
+            if (!alreadyListed.has(s)) {
+                const opt = document.createElement('option');
+                opt.value = s; opt.textContent = s;
+                dd.appendChild(opt);
+            }
+        });
+    }
 }
 
 function updateScrubber(idx) {
