@@ -274,7 +274,10 @@ def get_visual_crossing_weather(city, timestamp_str):
 def calculate_environmental_stress(df, actual_temp=None, actual_hum=None):
     recent = df.tail(30)
     # Safely handle CSVs that don't have these specific sensor columns
-    avg_coolant = float(recent["Coolant Temp (°C)"].mean()) if "Coolant Temp (°C)" in df.columns else 80.0
+    raw_coolant = float(recent["Coolant Temp (°C)"].mean()) if "Coolant Temp (°C)" in df.columns else 80.0
+    # Clamp to a realistic engine coolant range (0–150°C) — guards against raw ADC values
+    # accidentally aliased to this column causing absurd temperature calculations
+    avg_coolant = max(0.0, min(150.0, raw_coolant))
     v_temp = 25 + (max(0, avg_coolant - 85) * 0.5)
     volts_std = float(recent["Battery Voltage (V)"].std()) if "Battery Voltage (V)" in df.columns else 0.1
     v_hum = min(95, 40 + (volts_std * 100))
@@ -404,8 +407,8 @@ COLUMN_ALIASES = {
     "Accelerator Position (%)":              "Throttle Position (%)",
     "Pedal Position (%)":                    "Throttle Position (%)",
     "Throttle Pos (%)":                      "Throttle Position (%)",
-    # Coolant temperature
-    "Coolant Temperature Raw":               "Coolant Temp (°C)",
+    # Coolant temperature — NOTE: "Coolant Temperature Raw" intentionally excluded
+    # because Raw columns store unprocessed ADC values, not real °C
     "Coolant Temperature (°C)":              "Coolant Temp (°C)",
     "Engine Coolant Temperature":            "Coolant Temp (°C)",
     "ECT (°C)":                              "Coolant Temp (°C)",
