@@ -130,6 +130,20 @@
         .live-risk-bar { width:100%; height:10px; border-radius:5px; background:rgba(255,255,255,0.07); overflow:hidden; margin-top:12px; }
         .live-risk-fill { height:100%; border-radius:5px; background:linear-gradient(90deg,#2ecc71,#f39c12,#e74c3c); transition:width 0.5s ease; }
 
+        /* ── Multi-Sensor Health Bullet Gauges ──────────────────────── */
+        .bullet-row { display:grid; grid-template-columns:180px 1fr 80px 90px; align-items:center; gap:14px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+        .bullet-label { font-size:12px; color:#d1d1d1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .bullet-track { position:relative; height:10px; background:rgba(255,255,255,0.06); border-radius:5px; overflow:visible; }
+        .bullet-ideal  { position:absolute; height:100%; background:rgba(0,210,255,0.18); border:1px solid rgba(0,210,255,0.3); border-radius:5px; }
+        .bullet-marker { position:absolute; top:-4px; width:4px; height:18px; border-radius:2px; transform:translateX(-50%); }
+        .bullet-value  { font-size:12px; font-weight:600; color:#ffffff; text-align:right; }
+        .health-badge  { display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:4px; text-transform:uppercase; letter-spacing:0.5px; text-align:center; }
+        .hb-normal   { background:rgba(46,204,113,0.2);  color:#2ecc71; border:1px solid rgba(46,204,113,0.4); }
+        .hb-low      { background:rgba(52,152,219,0.2);  color:#3498db; border:1px solid rgba(52,152,219,0.4); }
+        .hb-high     { background:rgba(243,156,18,0.2);  color:#f39c12; border:1px solid rgba(243,156,18,0.4); }
+        .hb-critical { background:rgba(231,76,60,0.2);   color:#e74c3c; border:1px solid rgba(231,76,60,0.4); }
+        .hb-unknown  { background:rgba(255,255,255,0.07); color:#7a8a94; border:1px solid rgba(255,255,255,0.1); }
+
         /* ── NEW: Multi-File Comparison ────────────────────────────────── */
         .compare-controls { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
         .compare-tag { background:rgba(0,210,255,0.1); border:1px solid rgba(0,210,255,0.2); color:var(--accent-cyan); padding:4px 10px; border-radius:6px; font-size:12px; }
@@ -227,6 +241,7 @@
     <div class="sidebar-section">Diagnostics</div>
     <a class="sidebar-link" href="#driverSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🚗</span> Driver Behavior</a>
     <a class="sidebar-link" href="#rulSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">⏱</span> RUL</a>
+    <a class="sidebar-link" href="#healthStateSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔬</span> Health State</a>
     <a class="sidebar-link" href="#scrubberSection" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔍</span> Anomaly Scrubber</a>
     <div class="sidebar-section">Live & Compare</div>
     <a class="sidebar-link" href="#sec-live" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📡</span> Live OBD-II</a>
@@ -374,6 +389,26 @@
                 </thead>
                 <tbody id="rulBody"></tbody>
             </table>
+        </div>
+
+        <!-- ══ MULTI-SENSOR HEALTH STATE ══════════════════════════════ -->
+        <div class="box full fade-section" id="healthStateSection" style="display:none;" id="sec-health">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+                <div class="section-title" style="margin-bottom:0;">🔬 Multi-Sensor Health State — Ideal vs Current</div>
+                <span style="font-size:11px;color:var(--text-gray);letter-spacing:0.8px;">Based on diesel engine OEM specifications &amp; SAE J1979</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 2fr;gap:28px;align-items:start;">
+                <!-- Radar Chart -->
+                <div>
+                    <div style="font-size:11px;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">Health Radar — Ideal (outer) vs Current (inner)</div>
+                    <canvas id="healthRadarChart" style="max-height:300px;"></canvas>
+                </div>
+                <!-- Bullet Gauges -->
+                <div>
+                    <div style="font-size:11px;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">Per-Sensor Status — Current Value vs Ideal Band</div>
+                    <div id="healthBulletList"></div>
+                </div>
+            </div>
         </div>
 
         <!-- ══════════════════════════════════════════════════════════
@@ -755,6 +790,127 @@ function renderRUL(rul) {
                 </td>
             </tr>`;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MULTI-SENSOR HEALTH STATE — Ideal vs Current
+// ═══════════════════════════════════════════════════════════════
+let healthRadarChartInst = null;
+
+function renderHealthState(hs) {
+    if (!hs || Object.keys(hs).length === 0) return;
+    document.getElementById('healthStateSection').style.display = 'block';
+
+    // Filter to sensors that have meaningful ideal ranges defined (non-null ideal_min)
+    const known = Object.entries(hs).filter(([k,v]) => v.ideal_min !== null);
+    const all   = Object.entries(hs);
+
+    // ── Radar chart — health scores ──────────────────────────────
+    // Use sensors with known ideals for radar; limit to 8 for readability
+    const radarSensors = known.slice(0, 8);
+    const labels = radarSensors.map(([k]) => k.length > 18 ? k.slice(0,16)+'…' : k);
+    const currentScores = radarSensors.map(([k,v]) => v.health_score);
+    const idealScores   = radarSensors.map(() => 100);
+
+    if (healthRadarChartInst) healthRadarChartInst.destroy();
+    healthRadarChartInst = new Chart(document.getElementById('healthRadarChart'), {
+        type: 'radar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Ideal State',
+                    data: idealScores,
+                    borderColor: 'rgba(0,210,255,0.5)',
+                    backgroundColor: 'rgba(0,210,255,0.06)',
+                    borderDash: [4,3],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                },
+                {
+                    label: 'Current State',
+                    data: currentScores,
+                    borderColor: '#f39c12',
+                    backgroundColor: 'rgba(243,156,18,0.12)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: currentScores.map(s =>
+                        s >= 90 ? '#2ecc71' : s >= 70 ? '#f39c12' : '#e74c3c'),
+                }
+            ]
+        },
+        options: {
+            scales: {
+                r: {
+                    min: 0, max: 100,
+                    grid:      { color: 'rgba(255,255,255,0.07)' },
+                    angleLines:{ color: 'rgba(255,255,255,0.07)' },
+                    ticks: { display: false },
+                    pointLabels:{ color: '#aab8c2', font:{ size: 10 } }
+                }
+            },
+            plugins: {
+                legend: { labels: { color: '#aab8c2', font:{ size:11 } } }
+            }
+        }
+    });
+
+    // ── Bullet gauges ─────────────────────────────────────────────
+    const list = document.getElementById('healthBulletList');
+    list.innerHTML = '';
+
+    // Show all sensors — known ideals first, then unknown
+    const sorted = [
+        ...known.sort((a,b) => a[1].health_score - b[1].health_score), // worst first
+        ...all.filter(([k,v]) => v.ideal_min === null)
+    ];
+
+    sorted.forEach(([sensor, info]) => {
+        const badgeClass = {
+            NORMAL: 'hb-normal', LOW: 'hb-low',
+            HIGH: 'hb-high', CRITICAL: 'hb-critical', UNKNOWN: 'hb-unknown'
+        }[info.status] || 'hb-unknown';
+
+        let bulletHtml = '';
+        if (info.ideal_min !== null) {
+            // Compute positions as % of a display range: ideal_min*0.6 to ideal_max*1.5
+            const dispMin = info.ideal_min * 0.55;
+            const dispMax = info.ideal_max * 1.55;
+            const dispRange = dispMax - dispMin + 1e-6;
+            const idealLeft  = ((info.ideal_min - dispMin) / dispRange * 100).toFixed(1);
+            const idealWidth = ((info.ideal_max - info.ideal_min) / dispRange * 100).toFixed(1);
+            const markerPos  = Math.min(99, Math.max(1,
+                ((info.current_mean - dispMin) / dispRange * 100))).toFixed(1);
+            const markerColor = info.status === 'NORMAL' ? '#2ecc71'
+                : info.status === 'CRITICAL' ? '#e74c3c' : '#f39c12';
+
+            bulletHtml = `
+                <div class="bullet-track">
+                    <div class="bullet-ideal" style="left:${idealLeft}%;width:${idealWidth}%;"></div>
+                    <div class="bullet-marker" style="left:${markerPos}%;background:${markerColor};"></div>
+                </div>`;
+        } else {
+            // Unknown ideal — show health as a plain bar
+            const w = info.health_score.toFixed(0);
+            bulletHtml = `
+                <div class="bullet-track">
+                    <div style="position:absolute;height:100%;width:${w}%;background:rgba(122,138,148,0.4);border-radius:5px;"></div>
+                </div>`;
+        }
+
+        const unitStr = info.unit ? ` ${info.unit}` : '';
+        const idealStr = info.ideal_min !== null
+            ? `<span style="font-size:10px;color:var(--text-gray);">Ideal: ${info.ideal_min}–${info.ideal_max}${unitStr}</span>`
+            : `<span style="font-size:10px;color:var(--text-gray);">No ideal defined</span>`;
+
+        list.innerHTML += `
+            <div class="bullet-row">
+                <div class="bullet-label" title="${sensor} — ${info.note || ''}">${sensor}</div>
+                ${bulletHtml}
+                <div class="bullet-value">${info.current_mean}${unitStr}<br>${idealStr}</div>
+                <span class="health-badge ${badgeClass}">${info.status}</span>
+            </div>`;
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1543,6 +1699,7 @@ const _patchedAnalyze = async function() {
 
     if(data.driver_behavior) renderDriverBehavior(data.driver_behavior);
     if(data.rul) renderRUL(data.rul);
+    if(data.health_state) renderHealthState(data.health_state);
     if(data.scrubber) initScrubber(data.scrubber);
 
     loadHistory();

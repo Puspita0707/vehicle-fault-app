@@ -462,6 +462,109 @@ def normalize_columns(df):
     return df
 
 # ================================================================
+# MULTI-SENSOR HEALTH STATE ANALYSIS
+# Ideal ranges based on diesel engine specifications:
+# Mahindra mHawk diesel / common-rail diesel passenger vehicle
+# References: Bosch Automotive Handbook, SAE J1979, OEM service manuals
+# ================================================================
+SENSOR_IDEAL_RANGES = {
+    # ── Standard / mapped column names ──────────────────────────
+    "Coolant Temp (°C)":                    {"min": 85,   "max": 95,   "unit": "°C",      "note": "Optimal thermal efficiency band"},
+    "MAP (kPa)":                            {"min": 70,   "max": 100,  "unit": "kPa",     "note": "Intake manifold at normal load"},
+    "Battery Voltage (V)":                  {"min": 13.8, "max": 14.4, "unit": "V",       "note": "Alternator charging range"},
+    "Fuel Rail Pressure (bar)":             {"min": 3.0,  "max": 7.0,  "unit": "bar",     "note": "Petrol rail idle–cruise"},
+    "Engine RPM":                           {"min": 750,  "max": 900,  "unit": "rpm",     "note": "Healthy idle range"},
+    "Vehicle Speed (km/h)":                 {"min": 0,    "max": 120,  "unit": "km/h",    "note": "Safe urban operating range"},
+    "Throttle Position (%)":                {"min": 0,    "max": 80,   "unit": "%",       "note": "Normal pedal travel range"},
+    # ── April 02 specific column names ──────────────────────────
+    "Coolant Temperature (degree C)":       {"min": 85,   "max": 95,   "unit": "°C",      "note": "Diesel optimal thermal band"},
+    "Engine Speed (rpm)":                   {"min": 750,  "max": 900,  "unit": "rpm",     "note": "Diesel idle RPM range"},
+    "Rail Pressure (bar)":                  {"min": 250,  "max": 600,  "unit": "bar",     "note": "Common-rail diesel at idle–part load"},
+    "Total Air Mass Flow Into Engine (kg/h)": {"min": 40, "max": 120,  "unit": "kg/h",   "note": "Intake air at idle–urban load"},
+    "Turbocharger Vane Position (km/h)":    {"min": 20,   "max": 70,   "unit": "%",       "note": "VGT vane opening at part load"},
+    "Injection Quantity (mg/hub)":          {"min": 5,    "max": 18,   "unit": "mg/hub",  "note": "Diesel pilot+main injection at idle"},
+    "Current Limitations Active (nil)":     {"min": 0,    "max": 0,    "unit": "flag",    "note": "ECU should report zero limitations"},
+    # ── April 01 specific column names ──────────────────────────
+    "Total Air Mass Flow Into Engine":      {"min": 40,   "max": 110,  "unit": "kg/h",    "note": "Intake air at idle–urban load"},
+    "Boost Pressure (mV)":                  {"min": 0.98, "max": 1.25, "unit": "mV",      "note": "Boost signal at normal operating pressure"},
+    "Boost Temperature (kg/h)":             {"min": 35,   "max": 48,   "unit": "°C",      "note": "Charge air temperature pre-intercooler"},
+    "HFM Temperature":                      {"min": 34,   "max": 40,   "unit": "°C",      "note": "Hot-film MAF sensor operating range"},
+    "Fuel Temperature":                     {"min": 25,   "max": 45,   "unit": "°C",      "note": "Diesel fuel temp — injection quality"},
+    "Ambient Temperature (degree C)":       {"min": 15,   "max": 40,   "unit": "°C",      "note": "Standard ambient operating envelope"},
+    "Cabin Temperature":                    {"min": 20,   "max": 28,   "unit": "°C",      "note": "Driver comfort / HVAC target range"},
+    "Ambient Pressure (bar)":               {"min": 0.96, "max": 1.03, "unit": "bar",     "note": "Sea-level ± altitude tolerance"},
+    "Accelerator Pedal Position (%)":       {"min": 0,    "max": 75,   "unit": "%",       "note": "Normal pedal usage range"},
+}
+
+def compute_health_state(df):
+    """
+    For each numeric sensor, compute:
+      - current_mean, current_std (from actual data)
+      - ideal_min, ideal_max (from SENSOR_IDEAL_RANGES)
+      - health_score 0–100: 100 = perfectly within ideal band
+      - deviation_pct: how far outside ideal band (0 = inside)
+      - status: NORMAL / LOW / HIGH / CRITICAL
+
+    Sensors without a defined ideal range still get a z-score-based
+    health estimate so they appear in the radar chart.
+    """
+    exclude = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
+    numeric = df.select_dtypes(include=[np.number])
+    numeric = numeric[[c for c in numeric.columns if c not in exclude]]
+
+    result = {}
+    for col in numeric.columns:
+        current_mean = float(numeric[col].mean())
+        current_std  = float(numeric[col].std())
+        ideal = SENSOR_IDEAL_RANGES.get(col)
+
+        if ideal:
+            lo, hi = ideal["min"], ideal["max"]
+            mid     = (lo + hi) / 2.0
+            half    = (hi - lo) / 2.0 + 1e-6
+
+            if lo <= current_mean <= hi:
+                status      = "NORMAL"
+                deviation   = 0.0
+                health      = 100.0 - (abs(current_mean - mid) / half) * 15  # small penalty for off-centre
+            elif current_mean < lo:
+                deviation   = (lo - current_mean) / half * 100
+                status      = "CRITICAL" if deviation > 50 else "LOW"
+                health      = max(0, 100 - deviation * 0.9)
+            else:
+                deviation   = (current_mean - hi) / half * 100
+                status      = "CRITICAL" if deviation > 50 else "HIGH"
+                health      = max(0, 100 - deviation * 0.9)
+
+            result[col] = {
+                "current_mean": round(current_mean, 2),
+                "current_std":  round(current_std, 2),
+                "ideal_min":    lo,
+                "ideal_max":    hi,
+                "unit":         ideal["unit"],
+                "note":         ideal["note"],
+                "deviation_pct": round(deviation, 1),
+                "health_score":  round(min(100, health), 1),
+                "status":        status,
+            }
+        else:
+            # No ideal defined — use coefficient of variation as proxy
+            cv = current_std / (abs(current_mean) + 1e-6)
+            health = max(0, 100 - min(cv * 150, 100))
+            result[col] = {
+                "current_mean": round(current_mean, 2),
+                "current_std":  round(current_std, 2),
+                "ideal_min":    None,
+                "ideal_max":    None,
+                "unit":         "",
+                "note":         "No ideal reference defined",
+                "deviation_pct": None,
+                "health_score":  round(health, 1),
+                "status":        "UNKNOWN",
+            }
+    return result
+
+# ================================================================
 # EXISTING: Core helpers (unchanged)
 # ================================================================
 def classify_risk_dynamic(risk, risk_series):
@@ -1417,6 +1520,7 @@ async def predict(
             "scrubber":         scrubber,
             "alert_sent":       alert_sent,
             "vehicle_profile":  get_vehicle_profile(vehicle_type),
+            "health_state":     compute_health_state(df),
         })
     except Exception as e:
         return {"error": str(e)}
