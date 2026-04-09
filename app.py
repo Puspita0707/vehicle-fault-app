@@ -530,27 +530,69 @@ def compute_sensor_severity(df):
     return {k: round((v / total) * 100, 1) if total > 0 else 0 for k, v in scores.items()}
 
 def map_components_with_confidence(root_causes, sensor_severity):
-    component_map = {
-        "Battery / Charging System Issue": {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
-        "Coolant Temperature Fluctuation": {"Radiator": 1.0, "Thermostat": 0.8, "Coolant Pump": 0.7},
-        "Manifold Pressure Instability (MAP)": {"MAP Sensor": 1.0, "Intake Manifold": 0.7, "Vacuum Lines": 0.6},
+    # --- Path 1: ML root-cause based mapping (standard CSV with known columns) ---
+    cause_component_map = {
+        "Battery / Charging System Issue":      {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
+        "Coolant Temperature Fluctuation":      {"Radiator": 1.0, "Thermostat": 0.8, "Coolant Pump": 0.7},
+        "Manifold Pressure Instability (MAP)":  {"MAP Sensor": 1.0, "Intake Manifold": 0.7, "Vacuum Lines": 0.6},
         "Fuel Supply / Injector Pressure Drop": {"Fuel Pump": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.6}
     }
     sensor_to_cause = {
-        "Battery Voltage (V)": "Battery / Charging System Issue",
-        "Coolant Temp (°C)": "Coolant Temperature Fluctuation",
-        "MAP (kPa)": "Manifold Pressure Instability (MAP)",
+        "Battery Voltage (V)":      "Battery / Charging System Issue",
+        "Coolant Temp (°C)":        "Coolant Temperature Fluctuation",
+        "MAP (kPa)":                "Manifold Pressure Instability (MAP)",
         "Fuel Rail Pressure (bar)": "Fuel Supply / Injector Pressure Drop"
     }
     component_scores = {}
     for sensor, severity in sensor_severity.items():
         cause = sensor_to_cause.get(sensor)
-        if cause in root_causes and cause in component_map:
-            for component, weight in component_map[cause].items():
+        if cause in root_causes and cause in cause_component_map:
+            for component, weight in cause_component_map[cause].items():
                 component_scores[component] = component_scores.get(component, 0) + (severity * weight)
-    if not component_scores: return []
+
+    if component_scores:
+        total = sum(component_scores.values())
+        return sorted([(c, round((v/total)*100, 1)) for c, v in component_scores.items()], key=lambda x: x[1], reverse=True)
+
+    # --- Path 2: Direct sensor→component mapping for any CSV format ---
+    # Based on SAE J1979 / automotive systems engineering relationships.
+    # Each sensor's variance (severity score) is used to weight the components
+    # it is physically responsible for monitoring.
+    SENSOR_COMPONENT_DIRECT = {
+        # Intake / Air system
+        "Total Air Mass Flow Into Engine":       {"Air Filter": 1.0, "MAF Sensor": 0.9, "Turbocharger": 0.7, "Intake Manifold": 0.6},
+        "Boost Pressure (mV)":                   {"Turbocharger": 1.0, "Intercooler": 0.8, "Wastegate": 0.7, "Boost Controller": 0.6},
+        "Boost Temperature (kg/h)":              {"Turbocharger": 1.0, "Intercooler": 0.9, "Charge Air Cooler": 0.7},
+        "HFM Temperature":                       {"MAF Sensor": 1.0, "Air Filter": 0.8, "Intake System": 0.6},
+        "Ambient Pressure (bar)":                {"MAP Sensor": 0.8, "ECU / Fueling": 0.6},
+        # Thermal / Cooling system
+        "Coolant Temperature Raw":               {"Radiator": 1.0, "Thermostat": 0.9, "Coolant Pump": 0.7, "Water Pump": 0.6},
+        "Coolant Temp (°C)":                     {"Radiator": 1.0, "Thermostat": 0.9, "Coolant Pump": 0.7},
+        "Fuel Temperature":                      {"Fuel Cooler": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.7, "Fuel System": 0.6},
+        "Ambient Temperature (degree C)":        {"Engine Cooling": 0.7, "HVAC System": 0.6, "Radiator": 0.5},
+        "Cabin Temperature":                     {"HVAC System": 1.0, "Heater Core": 0.8, "AC Compressor": 0.7},
+        # Electrical / Charging
+        "Battery Voltage (V)":                   {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
+        # Fuel system
+        "Fuel Rail Pressure (bar)":              {"Fuel Pump": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.6},
+        # Drivetrain / Engine
+        "Engine RPM":                            {"Crankshaft Bearings": 1.0, "Timing Chain": 0.8, "Engine Mount": 0.6},
+        "Vehicle Speed (km/h)":                  {"Drivetrain": 1.0, "Transmission": 0.8, "Wheel Bearings": 0.6},
+        "Throttle Position (%)":                 {"Throttle Body": 1.0, "Accelerator Pedal": 0.8, "Drive-by-Wire": 0.6},
+        "MAP (kPa)":                             {"MAP Sensor": 1.0, "Intake Manifold": 0.8, "Vacuum Lines": 0.6},
+        "Accelerator Pedal Position (%)":        {"Throttle Body": 1.0, "Accelerator Pedal": 0.9, "Drive-by-Wire": 0.7},
+    }
+    for sensor, severity in sensor_severity.items():
+        if severity <= 0:
+            continue
+        components = SENSOR_COMPONENT_DIRECT.get(sensor, {})
+        for component, weight in components.items():
+            component_scores[component] = component_scores.get(component, 0) + (severity * weight)
+
+    if not component_scores:
+        return []
     total = sum(component_scores.values())
-    return sorted([(c, round((v/total)*100, 1)) for c, v in component_scores.items()], key=lambda x: x[1], reverse=True)
+    return sorted([(c, round((v/total)*100, 1)) for c, v in component_scores.items()], key=lambda x: x[1], reverse=True)[:6]
 
 def generate_swot(sensor_severity, component_confidence, climate_warnings):
     s, w, o, t = [], [], ["Climate-adaptive maintenance plan"], []
@@ -1194,17 +1236,27 @@ async def compare_files(files: List[UploadFile] = File(...)):
             contents = await f.read()
             df = pd.read_csv(BytesIO(contents))
             df.columns = df.columns.str.strip()
+            df = normalize_columns(df)   # apply same column aliasing as /predict
             # CSV stores Fuel Rail Pressure in kPa despite column name saying "bar" — convert to real bar
             if "Fuel Rail Pressure (bar)" in df.columns:
                 df["Fuel Rail Pressure (bar)"] = df["Fuel Rail Pressure (bar)"] / 100.0
 
             X_raw = build_features(df).dropna()
-            if len(X_raw) < 5:
-                results.append({"file": f.filename, "error": "INSUFFICIENT_DATA"})
-                continue
-
-            risk_series = model.predict(X_raw[model_features])
-            base_risk   = float(risk_series[-1])
+            if len(X_raw) >= 5:
+                risk_series = model.predict(X_raw[model_features])
+                base_risk   = float(risk_series[-1])
+            else:
+                # Same physics-based fallback as /predict (ISO 13381-1 z-score method)
+                exclude_ts = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
+                num_df = df.select_dtypes(include=[np.number])
+                num_df = num_df[[c for c in num_df.columns if c not in exclude_ts]]
+                if num_df.shape[1] > 0:
+                    z_all      = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
+                    row_risk   = (z_all.abs().mean(axis=1) / 3.0).clip(0, 1)
+                    risk_series = row_risk.rolling(window=20, min_periods=1).mean().values
+                else:
+                    risk_series = np.array([0.3])
+                base_risk = float(risk_series[-1])
             stress_mult, final_t, final_h, _ = calculate_environmental_stress(df)
             final_risk  = round(min(1.0, base_risk * stress_mult), 3)
             status      = classify_risk_dynamic(final_risk, risk_series)
@@ -1266,21 +1318,25 @@ async def predict(
             df["Fuel Rail Pressure (bar)"] = df["Fuel Rail Pressure (bar)"] / 100.0
 
         X_raw = build_features(df).dropna()
-        # If this CSV doesn't have the 4 ML model columns (e.g. a new vehicle format),
-        # fall back to a generic risk estimate so the sensor charts still work
-        if len(X_raw) < 5:
-            # Generic risk: mean z-score magnitude across all numeric cols
-            num_df = df.select_dtypes(include=[np.number])
-            if num_df.shape[1] > 0:
-                z_all = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
-                generic_risk = float(np.clip(z_all.abs().mean().mean() / 3.0, 0.05, 0.95))
-            else:
-                generic_risk = 0.5
-            risk_series = np.array([generic_risk])
-            base_risk   = generic_risk
-        else:
+        if len(X_raw) >= 5:
+            # Standard path: ML model on known features
             risk_series = model.predict(X_raw[model_features])
             base_risk   = float(risk_series[-1])
+        else:
+            # Physics-based fallback for CSVs without the 4 ML columns.
+            # Per-row rolling z-score anomaly magnitude across all numeric sensors
+            # (grounded in ISO 13381-1 condition monitoring methodology).
+            exclude_ts  = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
+            num_df = df.select_dtypes(include=[np.number])
+            num_df = num_df[[c for c in num_df.columns if c not in exclude_ts]]
+            if num_df.shape[1] > 0:
+                z_all      = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
+                row_risk   = (z_all.abs().mean(axis=1) / 3.0).clip(0, 1)
+                # Rolling window smoothing — reduces noise while preserving trend
+                risk_series = row_risk.rolling(window=20, min_periods=1).mean().values
+            else:
+                risk_series = np.array([0.3])
+            base_risk = float(risk_series[-1])
 
         actual_temp, actual_hum = get_visual_crossing_weather(city, timestamp)
         stress_mult, final_t, final_h, warnings = calculate_environmental_stress(df, actual_temp, actual_hum)
