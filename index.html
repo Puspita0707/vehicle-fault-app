@@ -1079,8 +1079,12 @@ function onSensorSelect() {
     document.getElementById('sensorChartLabel').innerText = sensor + ' — Performance Over Time';
 
     const smoothed = movingAverage(sensorVals, 50);
-    const mean = smoothed.reduce((a,b)=>a+b,0)/smoothed.length;
-    const std  = Math.sqrt(smoothed.map(x=>(x-mean)**2).reduce((a,b)=>a+b,0)/smoothed.length);
+    // Compute mean/std from the RAW (unsmoothed) sensor values so the threshold band
+    // reflects the true operating spread — smoothing collapses std artificially small
+    const rawMean = sensorVals.reduce((a,b)=>a+b,0)/sensorVals.length;
+    const rawStd  = Math.sqrt(sensorVals.map(x=>(x-rawMean)**2).reduce((a,b)=>a+b,0)/sensorVals.length);
+    const mean  = rawMean;
+    const std   = rawStd;
     const upper = mean + 1.5*std;
     const lower = mean - 1.5*std;
     const n = smoothed.length;
@@ -1112,7 +1116,9 @@ function onSensorSelect() {
             animation: false,
             scales: {
                 x: { grid:{ display:false }, ticks:{ maxTicksLimit:8, color:'#aab8c2' } },
-                y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' }, grace:'10%' }
+                y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#aab8c2' },
+                     min: parseFloat((Math.min(lower, Math.min(...smoothed)) * 0.97).toFixed(2)),
+                     max: parseFloat((Math.max(upper, Math.max(...smoothed)) * 1.03).toFixed(2)) }
             },
             plugins: { legend:{ labels:{ color:'#aab8c2', font:{size:11},
                 filter: item => item.text !== 'Upper Threshold' && item.text !== 'Lower Threshold'
