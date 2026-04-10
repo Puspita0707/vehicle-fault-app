@@ -443,35 +443,8 @@
                 <input type="range" class="scrubber-slider" id="scrubberSlider" min="0" value="0">
                 <div class="scrubber-timestamp" id="scrubberTimestamp">Timestamp: —</div>
             </div>
-            <div class="scrubber-info">
-                <div class="scrubber-card">
-                    <div class="sc-label">Coolant Temp</div>
-                    <div class="sc-value" id="scCoolant">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">MAP (kPa)</div>
-                    <div class="sc-value" id="scMAP">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">Battery Voltage</div>
-                    <div class="sc-value" id="scBattery">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">Engine RPM</div>
-                    <div class="sc-value" id="scRPM">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">Throttle %</div>
-                    <div class="sc-value" id="scThrottle">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">Speed km/h</div>
-                    <div class="sc-value" id="scSpeed">—</div>
-                </div>
-                <div class="scrubber-card">
-                    <div class="sc-label">Fuel Rail Pressure</div>
-                    <div class="sc-value" id="scFuel">—</div>
-                </div>
+            <!-- Dynamic sensor cards — built from actual CSV columns at runtime -->
+            <div class="scrubber-info" id="scrubberCards">
                 <div class="scrubber-card">
                     <div class="sc-label">Anomaly Flag</div>
                     <div class="sc-value" id="scAnomaly">—</div>
@@ -923,50 +896,70 @@ function initScrubber(sd) {
     const slider = document.getElementById("scrubberSlider");
     slider.max   = sd.timestamps.length - 1;
     slider.value = sd.timestamps.length - 1;
+
+    // ── Build dynamic sensor cards from actual CSV columns ──────
+    // Wipe old cards (keep anomaly card which is always last)
+    const cardsEl = document.getElementById('scrubberCards');
+    cardsEl.innerHTML = '';   // clear all
+
+    if (sd.sensors) {
+        Object.keys(sd.sensors).forEach(sensor => {
+            const safeId = "sc_" + sensor.replace(/[^a-zA-Z0-9]/g, "_");
+            const shortLabel = sensor.length > 20 ? sensor.slice(0, 18) + '…' : sensor;
+            cardsEl.innerHTML += `
+                <div class="scrubber-card">
+                    <div class="sc-label" title="${sensor}">${shortLabel}</div>
+                    <div class="sc-value" id="${safeId}">—</div>
+                </div>`;
+        });
+    }
+    // Anomaly flag always last
+    cardsEl.innerHTML += `
+        <div class="scrubber-card">
+            <div class="sc-label">Anomaly Flag</div>
+            <div class="sc-value" id="scAnomaly">—</div>
+        </div>`;
+
     updateScrubber(sd.timestamps.length - 1);
     slider.oninput = () => updateScrubber(parseInt(slider.value));
 
-    // Ensure sensor dropdown shows ALL columns from this CSV
-    // (the backend now sends every numeric column regardless of name)
+    // ── Sync sensor dropdown ─────────────────────────────────────
     const dd = document.getElementById('sensorDropdown');
     const alreadyListed = new Set(
         Array.from(dd.options).map(o => o.value).filter(v => v !== '')
     );
-    if (sd.sensors) {
-        Object.keys(sd.sensors).forEach(s => {
-            if (!alreadyListed.has(s)) {
-                const opt = document.createElement('option');
-                opt.value = s; opt.textContent = s;
-                dd.appendChild(opt);
-            }
-        });
-    }
+    Object.keys(sd.sensors || {}).forEach(s => {
+        if (!alreadyListed.has(s)) {
+            const opt = document.createElement('option');
+            opt.value = s; opt.textContent = s;
+            dd.appendChild(opt);
+        }
+    });
 }
 
 function updateScrubber(idx) {
     if(!scrubberData) return;
     const sd = scrubberData;
     const s  = sd.sensors;
+    const isAnomaly = sd.anomaly_flags[idx] === 1;
 
     document.getElementById("scrubberTimestamp").innerText = "Timestamp: " + sd.timestamps[idx] + "s";
-    document.getElementById("scCoolant").innerText  = (s["Coolant Temp (°C)"]?.[idx] ?? "—") + (s["Coolant Temp (°C)"] ? " °C" : "");
-    document.getElementById("scMAP").innerText      = (s["MAP (kPa)"]?.[idx] ?? "—") + (s["MAP (kPa)"] ? " kPa" : "");
-    document.getElementById("scBattery").innerText  = (s["Battery Voltage (V)"]?.[idx] ?? "—") + (s["Battery Voltage (V)"] ? " V" : "");
-    document.getElementById("scRPM").innerText      = s["Engine RPM"]?.[idx] ?? "—";
-    document.getElementById("scThrottle").innerText = (s["Throttle Position (%)"]?.[idx] ?? "—") + (s["Throttle Position (%)"] ? "%" : "");
-    document.getElementById("scSpeed").innerText    = (s["Vehicle Speed (km/h)"]?.[idx] ?? "—") + (s["Vehicle Speed (km/h)"] ? " km/h" : "");
-    document.getElementById("scFuel").innerText     = (s["Fuel Rail Pressure (bar)"]?.[idx] ?? "—") + (s["Fuel Rail Pressure (bar)"] ? " bar" : "");
 
-    const isAnomaly = sd.anomaly_flags[idx] === 1;
-    const dot   = document.getElementById("anomalyDot");
-    const scAn  = document.getElementById("scAnomaly");
-    dot.className   = "anomaly-dot " + (isAnomaly ? "on" : "off");
-    scAn.innerText  = isAnomaly ? "⚠️ ANOMALY" : "✅ Normal";
+    // Update every dynamic sensor card
+    Object.keys(s).forEach(sensor => {
+        const el = document.getElementById("sc_" + sensor.replace(/[^a-zA-Z0-9]/g, "_"));
+        if (!el) return;
+        const val = s[sensor]?.[idx];
+        el.innerText   = (val !== undefined && val !== null) ? val : "—";
+        el.style.color = isAnomaly ? "#e74c3c" : "#ffffff";
+    });
+
+    // Anomaly flag card
+    const dot  = document.getElementById("anomalyDot");
+    const scAn = document.getElementById("scAnomaly");
+    if (dot) dot.className = "anomaly-dot " + (isAnomaly ? "on" : "off");
+    scAn.innerText   = isAnomaly ? "⚠️ ANOMALY" : "✅ Normal";
     scAn.style.color = isAnomaly ? "#e74c3c" : "#2ecc71";
-
-    // Highlight anomalous sensor values in red
-    const sensors = ["scCoolant","scMAP","scBattery","scRPM","scThrottle","scSpeed","scFuel"];
-    sensors.forEach(id => { document.getElementById(id).style.color = isAnomaly ? "#e74c3c" : "#ffffff"; });
 }
 
 // ═══════════════════════════════════════════════════════════════
