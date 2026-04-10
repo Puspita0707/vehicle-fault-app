@@ -424,8 +424,8 @@ COLUMN_ALIASES = {
     "Vehicle Speed":                         "Vehicle Speed (km/h)",
     "GPS Speed (km/h)":                      "Vehicle Speed (km/h)",
     "Speed":                                 "Vehicle Speed (km/h)",
-    # MAP / Boost pressure (approximate mapping)
-    "Boost Pressure (mV)":                   "MAP (kPa)",
+    # MAP / Boost pressure — only alias if units are actually kPa
+    # "Boost Pressure (mV)" intentionally NOT mapped to MAP (kPa) — different unit entirely
     "Manifold Pressure (kPa)":              "MAP (kPa)",
     "Intake Manifold Pressure (kPa)":       "MAP (kPa)",
     "MAP":                                   "MAP (kPa)",
@@ -492,7 +492,9 @@ SENSOR_IDEAL_RANGES = {
     "Fuel Temperature":                     {"min": 25,   "max": 45,   "unit": "°C",      "note": "Diesel fuel temp — injection quality"},
     "Ambient Temperature (degree C)":       {"min": 15,   "max": 40,   "unit": "°C",      "note": "Standard ambient operating envelope"},
     "Cabin Temperature":                    {"min": 20,   "max": 28,   "unit": "°C",      "note": "Driver comfort / HVAC target range"},
-    "Ambient Pressure (bar)":               {"min": 0.96, "max": 1.03, "unit": "bar",     "note": "Sea-level ± altitude tolerance"},
+    # Ambient Pressure intentionally excluded from health scoring —
+    # it reflects geographic altitude, not a vehicle fault
+    # "Ambient Pressure (bar)": excluded,
     "Accelerator Pedal Position (%)":       {"min": 0,    "max": 75,   "unit": "%",       "note": "Normal pedal usage range"},
 }
 
@@ -508,7 +510,10 @@ def compute_health_state(df):
     Sensors without a defined ideal range still get a z-score-based
     health estimate so they appear in the radar chart.
     """
-    exclude = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
+    # Exclude timestamp columns + purely environmental/geographic sensors
+    # that are not vehicle faults (ambient pressure = altitude effect)
+    exclude = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0",
+               "Ambient Pressure (bar)"}
     numeric = df.select_dtypes(include=[np.number])
     numeric = numeric[[c for c in numeric.columns if c not in exclude]]
 
