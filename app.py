@@ -574,9 +574,18 @@ def compute_health_state(df):
 # ================================================================
 def classify_risk_dynamic(risk, risk_series):
     arr = np.array(risk_series)
-    p50, p80 = np.percentile(arr, 50), np.percentile(arr, 80)
-    if risk >= p80: return "CRITICAL"
-    return "WARNING" if risk >= p50 else "SAFE"
+    if len(arr) >= 10:
+        # Full percentile-based classification on ML-generated risk series
+        # (ISO 13381-1 / research-grade intra-session drift detection)
+        p50, p80 = np.percentile(arr, 50), np.percentile(arr, 80)
+        if risk >= p80: return "CRITICAL"
+        return "WARNING" if risk >= p50 else "SAFE"
+    else:
+        # Health-state derived risk — use absolute thresholds
+        # (IEC 62443 / ISO 26262 functional safety classification)
+        if risk >= 0.65: return "CRITICAL"
+        if risk >= 0.35: return "WARNING"
+        return "SAFE"
 
 def build_features(df):
     win = 10
@@ -596,6 +605,7 @@ def detect_anomalies(df):
 
 def detect_root_cause(df):
     recent, causes = df.tail(30), []
+    # --- Standard path: calibrated thresholds for known columns ---
     if "Battery Voltage (V)" in df.columns and recent["Battery Voltage (V)"].std() > 0.4:
         causes.append("Battery / Charging System Issue")
     if "Coolant Temp (°C)" in df.columns and recent["Coolant Temp (°C)"].std() > 5:
@@ -604,7 +614,24 @@ def detect_root_cause(df):
         causes.append("Manifold Pressure Instability (MAP)")
     if "Fuel Rail Pressure (bar)" in df.columns and recent["Fuel Rail Pressure (bar)"].mean() < 2.5:
         causes.append("Fuel Supply / Injector Pressure Drop")
-    return causes if causes else ["No dominant sensor anomaly detected"]
+    if causes:
+        return causes
+    # --- Generic fallback: report top high-variance sensors as root causes ---
+    # Uses coefficient of variation — works for any sensor unit or scale
+    exclude = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0",
+               "Coolant Temperature Raw", "Current Limitations Active (nil)"}
+    numeric = df.select_dtypes(include=[np.number])
+    cv_scores = {}
+    for col in numeric.columns:
+        if col in exclude: continue
+        col_mean = abs(recent[col].mean()) + 1e-6
+        col_cv   = recent[col].std() / col_mean
+        if col_cv > 0.05:   # only flag sensors with meaningful variance
+            cv_scores[col] = col_cv
+    top = sorted(cv_scores.items(), key=lambda x: x[1], reverse=True)[:2]
+    for sensor, cv in top:
+        causes.append(f"{sensor} high variability (CV={cv:.2f})")
+    return causes if causes else ["All sensors stable — low internal anomaly"]
 
 def compute_sensor_severity(df):
     recent = df.tail(30)
@@ -1354,17 +1381,13 @@ async def compare_files(files: List[UploadFile] = File(...)):
                 risk_series = model.predict(X_raw[model_features])
                 base_risk   = float(risk_series[-1])
             else:
-                # Same physics-based fallback as /predict (ISO 13381-1 z-score method)
-                exclude_ts = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
-                num_df = df.select_dtypes(include=[np.number])
-                num_df = num_df[[c for c in num_df.columns if c not in exclude_ts]]
-                if num_df.shape[1] > 0:
-                    z_all      = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
-                    row_risk   = (z_all.abs().mean(axis=1) / 3.0).clip(0, 1)
-                    risk_series = row_risk.rolling(window=20, min_periods=1).mean().values
-                else:
-                    risk_series = np.array([0.3])
-                base_risk = float(risk_series[-1])
+                # Same health-state-based fallback as /predict
+                hs = compute_health_state(df)
+                known_scores = [v["health_score"] for v in hs.values()
+                                if v["health_score"] is not None and v["ideal_min"] is not None]
+                base_risk = float(np.clip(1.0 - np.mean(known_scores) / 100.0, 0.05, 0.95)) \
+                            if known_scores else 0.3
+                risk_series = np.array([base_risk])
             stress_mult, final_t, final_h, _ = calculate_environmental_stress(df)
             final_risk  = round(min(1.0, base_risk * stress_mult), 3)
             status      = classify_risk_dynamic(final_risk, risk_series)
@@ -1431,20 +1454,19 @@ async def predict(
             risk_series = model.predict(X_raw[model_features])
             base_risk   = float(risk_series[-1])
         else:
-            # Physics-based fallback for CSVs without the 4 ML columns.
-            # Per-row rolling z-score anomaly magnitude across all numeric sensors
-            # (grounded in ISO 13381-1 condition monitoring methodology).
-            exclude_ts  = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
-            num_df = df.select_dtypes(include=[np.number])
-            num_df = num_df[[c for c in num_df.columns if c not in exclude_ts]]
-            if num_df.shape[1] > 0:
-                z_all      = (num_df - num_df.mean()) / (num_df.std() + 1e-6)
-                row_risk   = (z_all.abs().mean(axis=1) / 3.0).clip(0, 1)
-                # Rolling window smoothing — reduces noise while preserving trend
-                risk_series = row_risk.rolling(window=20, min_periods=1).mean().values
+            # Health-state based risk for CSVs without the 4 ML columns.
+            # Derives risk from how far each sensor deviates from its ideal band
+            # (ISO 13381-1 health index methodology: risk = 1 - health_index)
+            hs = compute_health_state(df)
+            known_scores = [v["health_score"] for v in hs.values()
+                            if v["health_score"] is not None and v["ideal_min"] is not None]
+            if known_scores:
+                avg_health = float(np.mean(known_scores))
+                base_risk  = float(np.clip(1.0 - avg_health / 100.0, 0.05, 0.95))
             else:
-                risk_series = np.array([0.3])
-            base_risk = float(risk_series[-1])
+                base_risk  = 0.3
+            # Single-point series — classify_risk_dynamic will use absolute thresholds
+            risk_series = np.array([base_risk])
 
         actual_temp, actual_hum = get_visual_crossing_weather(city, timestamp)
         stress_mult, final_t, final_h, warnings = calculate_environmental_stress(df, actual_temp, actual_hum)

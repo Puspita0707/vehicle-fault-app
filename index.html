@@ -234,7 +234,6 @@
     <a class="sidebar-link active" href="#sec-overview" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📊</span> Dashboard KPIs</a>
     <a class="sidebar-link" href="#sec-upload" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📁</span> Upload & Analyze</a>
     <div class="sidebar-section">Analysis</div>
-    <a class="sidebar-link" href="#sec-risk" onclick="sidebarNav(event,this)"><span class="sidebar-icon">📈</span> Risk Trend</a>
     <a class="sidebar-link" href="#sec-sensors" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔌</span> Sensor Performance</a>
     <a class="sidebar-link" href="#sec-components" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🔧</span> Components</a>
     <a class="sidebar-link" href="#sec-insights" onclick="sidebarNav(event,this)"><span class="sidebar-icon">🤖</span> AI Insights</a>
@@ -286,12 +285,6 @@
     </div>
 
     <div class="dashboard-grid">
-
-        <!-- ══ EXISTING: Risk Trend ══ -->
-        <div class="box full fade-section" id="sec-risk">
-            <div class="section-title">Risk Trend</div>
-            <canvas id="riskChart"></canvas>
-        </div>
 
         <!-- ══ SENSOR PERFORMANCE: dropdown + timeline + component impact ══ -->
         <div class="box full fade-section" id="sec-sensors">
@@ -583,7 +576,7 @@
 // ═══════════════════════════════════════════════════════════════
 // GLOBALS
 // ═══════════════════════════════════════════════════════════════
-let riskChart, sensorChart, componentChart, riskDistributionChart, compareChart, liveChart;
+let sensorChart, componentChart, riskDistributionChart, compareChart, liveChart;
 let sensorComponentChartInst = null;
 let lastScrubberData = null;
 let lastSeverityData = null;
@@ -655,7 +648,7 @@ async function analyze() {
     }
 
     // ── Existing Charts
-    buildRiskChart(data.time_axis, data.risk_trend);
+    // Risk Trend chart removed
     buildSensorChart(data.sensor_severity);
     buildComponentChart(data.recommended_components);
 
@@ -1185,13 +1178,7 @@ function renderClimateImpact(data) {
 // ═══════════════════════════════════════════════════════════════
 // EXISTING: Chart builders
 // ═══════════════════════════════════════════════════════════════
-function buildRiskChart(labels, series) {
-    if(riskChart) riskChart.destroy();
-    riskChart = new Chart(document.getElementById("riskChart"), {
-        type:"line", data:{ labels, datasets:[{ label:"Risk Score", data:series, borderColor:"#00d2ff", backgroundColor:"rgba(0,210,255,0.1)", tension:0.4, fill:true, borderWidth:3, pointRadius:0 }]},
-        options:{ scales:{ y:{ grid:{color:"rgba(255,255,255,0.05)"}, min:0, max:1 }, x:{ grid:{display:false} } } }
-    });
-}
+// buildRiskChart removed — Risk Trend section removed from dashboard
 function buildSensorChart(severity) {
     lastSeverityData = severity;
     // Populate dropdown with all sensors from severity data
@@ -1673,7 +1660,7 @@ const _patchedAnalyze = async function() {
     }
 
     // ── Existing Charts
-    buildRiskChart(data.time_axis, data.risk_trend);
+    // Risk Trend chart removed
     buildSensorChart(data.sensor_severity);
     buildComponentChart(data.recommended_components);
 
@@ -1747,7 +1734,7 @@ window.addEventListener('load', () => {
 });
 
 // Auto-highlight sidebar link as user scrolls
-const _sectionIds = ['sec-overview','sec-upload','sec-risk','sec-sensors','sec-components',
+const _sectionIds = ['sec-overview','sec-upload','sec-sensors','sec-components',
     'sec-insights','driverSection','rulSection','scrubberSection',
     'sec-live','sec-compare','climateImpactSection','sec-history'];
 
