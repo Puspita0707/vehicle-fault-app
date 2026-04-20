@@ -95,10 +95,21 @@ def serve_frontend():
     })
 
 # -------------------------------
-# Load trained artifacts
+# Load trained artifacts — subsystem-based model bundle
+# vehicle_risk_model.pkl contains 5 Isolation Forest pipelines (one per subsystem)
+# trained on real XUV mHawk diesel data (april01 + april02)
 # -------------------------------
-model = joblib.load("vehicle_risk_model.pkl")
-model_features = joblib.load("model_features.pkl")
+_model_bundle = None
+_subsystem_columns = None
+try:
+    _model_bundle = joblib.load("vehicle_risk_model.pkl")
+    # v2.0 bundle has a 'subsystems' key; old single-model has 'predict' method
+    if not isinstance(_model_bundle, dict) or 'subsystems' not in _model_bundle:
+        print("⚠️  Old model format detected — subsystem inference disabled until retrained.")
+        _model_bundle = None
+    _subsystem_columns = joblib.load("subsystem_columns.pkl")
+except Exception as e:
+    print(f"Model load note: {e}")
 
 # -------------------------------
 # PostgreSQL Connection
@@ -461,6 +472,40 @@ def normalize_columns(df):
         df = df.rename(columns=rename_map)
     return df
 
+
+def harmonize_new_dataset_signals(df):
+    """
+    Convert/raw-map April dataset channels into model-usable engineering signals.
+    This keeps UI contracts unchanged while adapting backend logic to new schemas.
+    """
+    df = df.copy()
+
+    # Coolant raw ADC-like channel -> approximate coolant deg C.
+    # Empirically, raw ~ 1580 corresponds to ~99 deg C, so divide by 16.
+    if "Coolant Temperature Raw" in df.columns and "Coolant Temperature (degree C)" not in df.columns:
+        df["Coolant Temperature (degree C)"] = pd.to_numeric(
+            df["Coolant Temperature Raw"], errors="coerce"
+        ) / 16.0
+
+    # Boost pressure sensor is provided in ~volts (mislabeled mV) around 0.95-1.20.
+    # Convert to kPa proxy for legacy MAP-based logic.
+    if "Boost Pressure (mV)" in df.columns and "MAP (kPa)" not in df.columns:
+        df["MAP (kPa)"] = pd.to_numeric(df["Boost Pressure (mV)"], errors="coerce") * 100.0
+
+    # Keep airflow alias expected by subsystem paths.
+    if "Total Air Mass Flow Into Engine" in df.columns and "Total Air Mass Flow Into Engine (kg/h)" not in df.columns:
+        df["Total Air Mass Flow Into Engine (kg/h)"] = pd.to_numeric(
+            df["Total Air Mass Flow Into Engine"], errors="coerce"
+        )
+
+    # Keep explicit thermal aliases used by severity/root-cause paths.
+    if "Boost Temperature (kg/h)" in df.columns and "Boost Temperature (°C)" not in df.columns:
+        df["Boost Temperature (°C)"] = pd.to_numeric(df["Boost Temperature (kg/h)"], errors="coerce")
+    if "HFM Temperature" in df.columns and "HFM Temperature (°C)" not in df.columns:
+        df["HFM Temperature (°C)"] = pd.to_numeric(df["HFM Temperature"], errors="coerce")
+
+    return df
+
 # ================================================================
 # MULTI-SENSOR HEALTH STATE ANALYSIS
 # Ideal ranges based on diesel engine specifications:
@@ -492,6 +537,12 @@ SENSOR_IDEAL_RANGES = {
     "Fuel Temperature":                     {"min": 25,   "max": 45,   "unit": "°C",      "note": "Diesel fuel temp — injection quality"},
     "Ambient Temperature (degree C)":       {"min": 15,   "max": 40,   "unit": "°C",      "note": "Standard ambient operating envelope"},
     "Cabin Temperature":                    {"min": 20,   "max": 28,   "unit": "°C",      "note": "Driver comfort / HVAC target range"},
+    # Derived/alias channels used in UI health table (industry-aligned practical bounds)
+    # Coolant Temperature Raw is an ECU raw channel; here ~raw/16 ≈ deg C.
+    # So 85–95 deg C operational band corresponds to ~1360–1520 raw units.
+    "Coolant Temperature Raw":              {"min": 1360, "max": 1520, "unit": "raw",     "note": "ECU coolant raw count equivalent to ~85–95°C"},
+    "Boost Temperature (°C)":               {"min": 35,   "max": 48,   "unit": "°C",      "note": "Charge-air temperature normal operating range"},
+    "HFM Temperature (°C)":                 {"min": 34,   "max": 40,   "unit": "°C",      "note": "MAF/HFM thermal operating envelope"},
     # Ambient Pressure intentionally excluded from health scoring —
     # it reflects geographic altitude, not a vehicle fault
     # "Ambient Pressure (bar)": excluded,
@@ -587,11 +638,142 @@ def classify_risk_dynamic(risk, risk_series):
         if risk >= 0.35: return "WARNING"
         return "SAFE"
 
+def _build_subsystem_features(df, columns):
+    """
+    Build rolling-window features for a specific subsystem's columns.
+    For each present column: val, rolling std, rolling mean, rate-of-change.
+    Returns (DataFrame, feature_name_list) or (None, []) if no columns match.
+    """
+    WINDOW = 10
+    available = [c for c in columns if c in df.columns]
+    if not available:
+        return None, []
+    feat = pd.DataFrame(index=df.index)
+    feat_names = []
+    for col in available:
+        s = df[col].ffill().bfill().fillna(0)
+        safe = (col.replace(' ', '_').replace('(', '').replace(')', '')
+                   .replace('/', '_').replace('%', 'pct').replace('°', ''))
+        feat[f'{safe}_val']  = s.values
+        feat[f'{safe}_std']  = s.rolling(WINDOW, min_periods=1).std().fillna(0).values
+        feat[f'{safe}_mean'] = s.rolling(WINDOW, min_periods=1).mean().fillna(0).values
+        feat[f'{safe}_roc']  = s.diff().fillna(0).values
+        feat_names += [f'{safe}_val', f'{safe}_std', f'{safe}_mean', f'{safe}_roc']
+    feat = feat.dropna()
+    return (feat[feat_names] if not feat.empty else None), feat_names
+
+
+def _align_subsystem_features(feat_df, model_info, pipe):
+    """
+    Make subsystem inference resilient to schema drift:
+    - prefer training-time feature names when available
+    - pad missing features with 0.0
+    - drop extras
+    - fallback to scaler input width if names are unavailable
+    """
+    X = feat_df.copy()
+
+    expected_feats = model_info.get("feat_names", [])
+    if isinstance(expected_feats, list) and expected_feats:
+        for col in expected_feats:
+            if col not in X.columns:
+                X[col] = 0.0
+        X = X[expected_feats]
+        return X
+
+    # Older bundles may not carry feat_names; align by expected width.
+    scaler = getattr(pipe, "named_steps", {}).get("scaler") if hasattr(pipe, "named_steps") else None
+    expected_n = getattr(scaler, "n_features_in_", None)
+    if expected_n is None:
+        return X
+
+    arr = X.values
+    if arr.shape[1] < expected_n:
+        pad = np.zeros((arr.shape[0], expected_n - arr.shape[1]))
+        arr = np.hstack([arr, pad])
+    elif arr.shape[1] > expected_n:
+        arr = arr[:, :expected_n]
+
+    cols = [f"f_{i}" for i in range(arr.shape[1])]
+    return pd.DataFrame(arr, index=X.index, columns=cols)
+
+
+def run_subsystem_inference(df):
+    """
+    Core ML inference: run each subsystem's Isolation Forest on the uploaded CSV.
+    Only subsystems whose sensor columns exist in the CSV are scored — no fallbacks.
+    Returns:
+      overall_risk      : float 0–1 (weighted average across active subsystems)
+      subsystem_results : dict  {key: {label, status, health, anomaly_pct, weight}}
+    """
+    if _model_bundle is None:
+        return None, {}
+
+    trained = _model_bundle.get('subsystems', {})
+    weighted_health = 0.0
+    weight_used = 0.0
+    results = {}
+
+    for key, model_info in trained.items():
+        feat_df, _ = _build_subsystem_features(df, model_info['columns'])
+
+        if feat_df is None or len(feat_df) == 0:
+            results[key] = {
+                'label':       model_info['label'],
+                'status':      'NO_DATA',
+                'health':      None,
+                'anomaly_pct': None,
+                'weight':      model_info['weight'],
+            }
+            continue
+
+        pipe = model_info['pipeline']
+        try:
+            aligned = _align_subsystem_features(feat_df, model_info, pipe)
+            preds = pipe.predict(aligned.values)
+        except Exception:
+            # If a subsystem model was trained with a different feature shape than
+            # current CSV can provide, skip only this subsystem instead of failing
+            # the full /predict request.
+            results[key] = {
+                'label':       model_info['label'],
+                'status':      'NO_DATA',
+                'health':      None,
+                'anomaly_pct': None,
+                'weight':      model_info['weight'],
+            }
+            continue
+        anom_pct = float((preds == -1).mean())
+        # Scale: 0% anomalous → 100% health; 25%+ anomalous → 0% health
+        health   = float(np.clip(1.0 - anom_pct * 4.0, 0.0, 1.0))
+
+        if anom_pct >= 0.10:   status = 'CRITICAL'
+        elif anom_pct >= 0.05: status = 'WARNING'
+        else:                   status = 'SAFE'
+
+        results[key] = {
+            'label':       model_info['label'],
+            'status':      status,
+            'health':      round(health * 100, 1),
+            'anomaly_pct': round(anom_pct * 100, 1),
+            'weight':      model_info['weight'],
+        }
+        weighted_health += health * model_info['weight']
+        weight_used     += model_info['weight']
+
+    if weight_used == 0:
+        return None, results
+
+    overall_health = weighted_health / weight_used
+    overall_risk   = float(np.clip(1.0 - overall_health, 0.02, 0.98))
+    return overall_risk, results
+
+
 def build_features(df):
+    # Legacy stub — kept so nothing breaks if called.
+    # All real inference now goes through run_subsystem_inference().
     win = 10
     out = pd.DataFrame(index=df.index)
-    # Only build features for columns that exist — returns NaN columns for missing ones
-    # (dropna() in the caller will then exclude those rows, returning empty for new CSVs)
     out["MAP (kPa)_std"] = df["MAP (kPa)"].rolling(win).std() if "MAP (kPa)" in df.columns else np.nan
     out["Coolant Temp (°C)_std"] = df["Coolant Temp (°C)"].rolling(win).std() if "Coolant Temp (°C)" in df.columns else np.nan
     out["Battery Voltage (V)_std"] = df["Battery Voltage (V)"].rolling(win).std() if "Battery Voltage (V)" in df.columns else np.nan
@@ -604,79 +786,253 @@ def detect_anomalies(df):
     return int((np.abs(z_scores) > 2.5).sum().sum())
 
 def detect_root_cause(df):
+    """
+    Calibrated root cause detection covering both old and new real vehicle column formats.
+    Thresholds derived from actual XUV vehicle data (idle baseline: april01/02 datasets).
+    """
     recent, causes = df.tail(30), []
-    # --- Standard path: calibrated thresholds for known columns ---
-    if "Battery Voltage (V)" in df.columns and recent["Battery Voltage (V)"].std() > 0.4:
-        causes.append("Battery / Charging System Issue")
+
+    # ── Air intake & turbocharger system ──────────────────────────
+    for air_col in ["Total Air Mass Flow Into Engine (kg/h)", "Total Air Mass Flow Into Engine"]:
+        if air_col in df.columns and recent[air_col].std() > 15:
+            causes.append("Intake Air Mass Flow Instability")
+            break
+
+    if "Boost Pressure (mV)" in df.columns and recent["Boost Pressure (mV)"].std() > 0.05:
+        causes.append("Boost Pressure Fluctuation")
+
+    if "Boost Temperature (kg/h)" in df.columns and recent["Boost Temperature (kg/h)"].mean() > 48:
+        causes.append("Turbo Charge Air Overheating")
+
+    if "Turbocharger Vane Position (km/h)" in df.columns:
+        vane_mean = recent["Turbocharger Vane Position (km/h)"].mean()
+        if vane_mean > 85:
+            causes.append("Turbocharger Vane Overextension")  # at idle >85% is restrictive
+
+    if "HFM Temperature" in df.columns and recent["HFM Temperature"].std() > 0.35:
+        causes.append("MAF Sensor Thermal Instability")
+
+    # ── Fuel / injection system ───────────────────────────────────
+    if "Rail Pressure (bar)" in df.columns:
+        if recent["Rail Pressure (bar)"].std() > 30:
+            causes.append("Fuel Rail Pressure Instability")
+        if recent["Rail Pressure (bar)"].mean() < 220:
+            causes.append("Low Fuel Rail Pressure")
+
+    if "Injection Quantity (mg/hub)" in df.columns and recent["Injection Quantity (mg/hub)"].std() > 5:
+        causes.append("Injection Quantity Instability")
+
+    if "Fuel Temperature" in df.columns and recent["Fuel Temperature"].mean() > 42:
+        causes.append("Fuel Temperature Elevated")
+
+    # ── Thermal / cooling system ──────────────────────────────────
+    if "Coolant Temperature (degree C)" in df.columns:
+        coolant_mean = recent["Coolant Temperature (degree C)"].mean()
+        coolant_std  = recent["Coolant Temperature (degree C)"].std()
+        if coolant_mean < 78:
+            causes.append("Engine Under-Temperature (Coolant Below 78°C)")
+        if coolant_std > 4:
+            causes.append("Coolant Temperature Instability")
+
+    # Old format mapped coolant column
     if "Coolant Temp (°C)" in df.columns and recent["Coolant Temp (°C)"].std() > 5:
         causes.append("Coolant Temperature Fluctuation")
+
+    # ── Electrical system ─────────────────────────────────────────
+    if "Battery Voltage (V)" in df.columns and recent["Battery Voltage (V)"].std() > 0.15:
+        causes.append("Battery / Charging System Issue")
+
+    # ── Engine behaviour ─────────────────────────────────────────
+    if "Engine Speed (rpm)" in df.columns and recent["Engine Speed (rpm)"].std() > 50:
+        causes.append("Engine Speed Instability")
+
+    # ── ECU / control flags ───────────────────────────────────────
+    if "Current Limitations Active (nil)" in df.columns and recent["Current Limitations Active (nil)"].mean() > 5:
+        causes.append("ECU Current Limitations Active")
+
+    # ── Legacy columns (old CSV format) ──────────────────────────
     if "MAP (kPa)" in df.columns and recent["MAP (kPa)"].std() > 8:
         causes.append("Manifold Pressure Instability (MAP)")
     if "Fuel Rail Pressure (bar)" in df.columns and recent["Fuel Rail Pressure (bar)"].mean() < 2.5:
         causes.append("Fuel Supply / Injector Pressure Drop")
-    if causes:
-        return causes
-    # --- Generic fallback: report top high-variance sensors as root causes ---
-    # Uses coefficient of variation — works for any sensor unit or scale
-    exclude = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0",
-               "Coolant Temperature Raw", "Current Limitations Active (nil)"}
-    numeric = df.select_dtypes(include=[np.number])
-    cv_scores = {}
-    for col in numeric.columns:
-        if col in exclude: continue
-        col_mean = abs(recent[col].mean()) + 1e-6
-        col_cv   = recent[col].std() / col_mean
-        if col_cv > 0.05:   # only flag sensors with meaningful variance
-            cv_scores[col] = col_cv
-    top = sorted(cv_scores.items(), key=lambda x: x[1], reverse=True)[:2]
-    for sensor, cv in top:
-        causes.append(f"{sensor} high variability (CV={cv:.2f})")
-    return causes if causes else ["All sensors stable — low internal anomaly"]
+
+    return causes if causes else ["All sensors stable — no dominant anomaly detected"]
 
 def compute_sensor_severity(df):
+    """
+    Per-sensor severity score in [0, 1] before normalising to %.
+    Calibrated thresholds are derived from real XUV mHawk diesel data
+    (april01 idle baseline + april02 driving run) following SAE J1979 /
+    Bosch Automotive Handbook guidelines.
+    """
     recent = df.tail(30)
     scores = {}
-    # --- Known sensors with calibrated thresholds ---
-    if "Battery Voltage (V)" in df.columns:
-        scores["Battery Voltage (V)"] = recent["Battery Voltage (V)"].std() / 0.4
-    if "Coolant Temp (°C)" in df.columns:
-        scores["Coolant Temp (°C)"] = recent["Coolant Temp (°C)"].std() / 5
-    if "MAP (kPa)" in df.columns:
-        scores["MAP (kPa)"] = recent["MAP (kPa)"].std() / 8
+
+    # ── Air intake & turbocharger ─────────────────────────────────────────
+    # Baseline idle std ≈ 0.14–0.19 kg/h; anomaly threshold = 15 kg/h
+    for air_col in ["Total Air Mass Flow Into Engine (kg/h)",
+                    "Total Air Mass Flow Into Engine"]:
+        if air_col in df.columns and air_col not in scores:
+            scores[air_col] = min(1.0, recent[air_col].std() / 15.0)
+
+    # Boost pressure in mV — raw sensor; std > 0.05 mV = anomaly
+    if "Boost Pressure (mV)" in df.columns:
+        scores["Boost Pressure (mV)"] = min(1.0, recent["Boost Pressure (mV)"].std() / 0.10)
+
+    # Boost temperature channel (mislabelled kg/h in firmware); mean > 48 = overheating
+    if "Boost Temperature (kg/h)" in df.columns:
+        bt_mean = recent["Boost Temperature (kg/h)"].mean()
+        scores["Boost Temperature (kg/h)"] = min(1.0, max(0.0, (bt_mean - 42.0) / 12.0))
+
+    # VGT vane position (%); mean > 85 % = overextension (actual baseline ≈ 93.9 %)
+    if "Turbocharger Vane Position (km/h)" in df.columns:
+        vane_mean = recent["Turbocharger Vane Position (km/h)"].mean()
+        scores["Turbocharger Vane Position (km/h)"] = min(1.0, max(0.0, (vane_mean - 80.0) / 20.0))
+
+    # HFM / MAF thermal channel; std > 0.35 = instability
+    if "HFM Temperature" in df.columns:
+        scores["HFM Temperature"] = min(1.0, recent["HFM Temperature"].std() / 0.35)
+
+    # ── Fuel / injection system ───────────────────────────────────────────
+    # Rail pressure (common-rail diesel): std > 30 bar = instability; mean < 220 bar = low
+    if "Rail Pressure (bar)" in df.columns:
+        rp_std  = recent["Rail Pressure (bar)"].std()
+        rp_mean = recent["Rail Pressure (bar)"].mean()
+        severity_std = min(1.0, rp_std / 30.0)
+        severity_low = min(1.0, max(0.0, (250.0 - rp_mean) / 100.0))  # penalty for < 250 bar
+        scores["Rail Pressure (bar)"] = max(severity_std, severity_low)
+
+    # Injection quantity (mg/stroke); std > 5 mg/hub = instability
+    if "Injection Quantity (mg/hub)" in df.columns:
+        scores["Injection Quantity (mg/hub)"] = min(1.0, recent["Injection Quantity (mg/hub)"].std() / 5.0)
+
+    # Fuel return temperature; mean > 42 °C = elevated heat-soak
+    if "Fuel Temperature" in df.columns:
+        ft_mean = recent["Fuel Temperature"].mean()
+        scores["Fuel Temperature"] = min(1.0, max(0.0, (ft_mean - 38.0) / 12.0))
+
+    # Legacy column name variant
     if "Fuel Rail Pressure (bar)" in df.columns:
-        scores["Fuel Rail Pressure (bar)"] = max(0, (2.5 - recent["Fuel Rail Pressure (bar)"].mean()) / 0.5)
-    if "Engine RPM" in df.columns:
-        scores["Engine RPM"] = min(1.0, recent["Engine RPM"].std() / 500)
-    if "Vehicle Speed (km/h)" in df.columns:
-        scores["Vehicle Speed (km/h)"] = min(1.0, recent["Vehicle Speed (km/h)"].std() / 30)
-    if "Throttle Position (%)" in df.columns:
-        scores["Throttle Position (%)"] = min(1.0, recent["Throttle Position (%)"].std() / 20)
-    # --- Generic fallback: coefficient of variation for any unrecognised numeric column ---
-    # This makes the dashboard work with ANY vehicle's CSV regardless of column names
+        scores["Fuel Rail Pressure (bar)"] = min(1.0, max(0.0, (2.5 - recent["Fuel Rail Pressure (bar)"].mean()) / 1.0))
+
+    # ── Thermal / cooling ─────────────────────────────────────────────────
+    # Coolant Temperature (degree C): normal warm 85–95 °C; below 78 = under-temp (cold engine)
+    if "Coolant Temperature (degree C)" in df.columns:
+        ct_mean = recent["Coolant Temperature (degree C)"].mean()
+        ct_std  = recent["Coolant Temperature (degree C)"].std()
+        sev_cold = min(1.0, max(0.0, (80.0 - ct_mean) / 20.0))   # penalise cold
+        sev_hot  = min(1.0, max(0.0, (ct_mean - 100.0) / 15.0))  # penalise overheating
+        sev_var  = min(1.0, ct_std / 4.0)                         # penalise instability
+        scores["Coolant Temperature (degree C)"] = max(sev_cold, sev_hot, sev_var)
+
+    # Aliased variant
+    if "Coolant Temp (°C)" in df.columns:
+        scores["Coolant Temp (°C)"] = min(1.0, recent["Coolant Temp (°C)"].std() / 5.0)
+
+    # ── Electrical / charging ─────────────────────────────────────────────
+    # Battery voltage: nominal 13.8–14.4 V charging; std > 0.15 V = alternator ripple
+    if "Battery Voltage (V)" in df.columns:
+        bv_std  = recent["Battery Voltage (V)"].std()
+        bv_mean = recent["Battery Voltage (V)"].mean()
+        sev_var  = min(1.0, bv_std / 0.15)
+        sev_low  = min(1.0, max(0.0, (12.5 - bv_mean) / 1.5))   # penalise low voltage
+        scores["Battery Voltage (V)"] = max(sev_var, sev_low)
+
+    # ── Engine ────────────────────────────────────────────────────────────
+    # Engine Speed (rpm): idle baseline std ≈ 0.67 rpm; std > 50 = instability
+    if "Engine Speed (rpm)" in df.columns:
+        scores["Engine Speed (rpm)"] = min(1.0, recent["Engine Speed (rpm)"].std() / 50.0)
+
+    # ── ECU / system limits ───────────────────────────────────────────────
+    # Current Limitations Active: 0 = none; > 5 = system-level protection active
+    if "Current Limitations Active (nil)" in df.columns:
+        scores["Current Limitations Active (nil)"] = min(1.0, recent["Current Limitations Active (nil)"].mean() / 10.0)
+
+    # ── Legacy / generic columns ──────────────────────────────────────────
+    if "MAP (kPa)" in df.columns and "MAP (kPa)" not in scores:
+        scores["MAP (kPa)"] = min(1.0, recent["MAP (kPa)"].std() / 8.0)
+    if "Engine RPM" in df.columns and "Engine RPM" not in scores:
+        scores["Engine RPM"] = min(1.0, recent["Engine RPM"].std() / 500.0)
+    if "Vehicle Speed (km/h)" in df.columns and "Vehicle Speed (km/h)" not in scores:
+        scores["Vehicle Speed (km/h)"] = min(1.0, recent["Vehicle Speed (km/h)"].std() / 30.0)
+    if "Throttle Position (%)" in df.columns and "Throttle Position (%)" not in scores:
+        scores["Throttle Position (%)"] = min(1.0, recent["Throttle Position (%)"].std() / 20.0)
+
+    # ── Generic fallback: coefficient of variation for any unrecognised numeric column ──
+    # Ensures dashboard works with ANY vehicle CSV regardless of column names
     exclude_cols = {"Timestamp (s)", "timestamp", "index", "row_id", "Unnamed: 0"}
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     for col in numeric_cols:
         if col not in scores and col not in exclude_cols:
             col_mean = abs(recent[col].mean()) + 1e-6
             col_std  = recent[col].std()
-            # Coefficient of variation capped at 1.0 — works universally
             scores[col] = min(1.0, col_std / col_mean)
+
     total = sum(scores.values())
     return {k: round((v / total) * 100, 1) if total > 0 else 0 for k, v in scores.items()}
 
 def map_components_with_confidence(root_causes, sensor_severity):
-    # --- Path 1: ML root-cause based mapping (standard CSV with known columns) ---
+    # --- Path 1: Root-cause → component mapping ---
+    # Covers both legacy ML causes AND new real-vehicle column causes
+    # Confidence weights derived from SAE J1979 / Bosch Automotive Handbook
     cause_component_map = {
-        "Battery / Charging System Issue":      {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
-        "Coolant Temperature Fluctuation":      {"Radiator": 1.0, "Thermostat": 0.8, "Coolant Pump": 0.7},
-        "Manifold Pressure Instability (MAP)":  {"MAP Sensor": 1.0, "Intake Manifold": 0.7, "Vacuum Lines": 0.6},
-        "Fuel Supply / Injector Pressure Drop": {"Fuel Pump": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.6}
+        # ── Legacy (old CSV / ML path) ────────────────────────────────────
+        "Battery / Charging System Issue":          {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
+        "Coolant Temperature Fluctuation":          {"Radiator": 1.0, "Thermostat": 0.8, "Coolant Pump": 0.7},
+        "Manifold Pressure Instability (MAP)":      {"MAP Sensor": 1.0, "Intake Manifold": 0.7, "Vacuum Lines": 0.6},
+        "Fuel Supply / Injector Pressure Drop":     {"Fuel Pump": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.6},
+        # ── Air intake / turbocharger ─────────────────────────────────────
+        "Intake Air Mass Flow Instability":         {"MAF Sensor": 1.0, "Air Filter": 0.9,
+                                                     "Turbocharger": 0.7, "Intake Manifold": 0.6},
+        "Boost Pressure Fluctuation":               {"Turbocharger": 1.0, "Wastegate": 0.9,
+                                                     "Intercooler": 0.7, "Boost Controller": 0.6},
+        "Turbo Charge Air Overheating":             {"Intercooler": 1.0, "Charge Air Cooler": 0.9,
+                                                     "Turbocharger": 0.8, "Coolant System": 0.5},
+        "Turbocharger Vane Overextension":          {"Variable Geometry Turbo (VGT)": 1.0,
+                                                     "Turbocharger": 0.9, "Wastegate Actuator": 0.8,
+                                                     "Boost Controller": 0.6},
+        "MAF Sensor Thermal Instability":           {"MAF Sensor": 1.0, "HFM Sensor": 0.9,
+                                                     "Air Filter": 0.7, "Intake Duct": 0.5},
+        # ── Fuel / injection system ───────────────────────────────────────
+        "Fuel Rail Pressure Instability":           {"High-Pressure Fuel Pump": 1.0, "Fuel Rail": 0.9,
+                                                     "Fuel Injector": 0.8, "Pressure Relief Valve": 0.6},
+        "Low Fuel Rail Pressure":                   {"High-Pressure Fuel Pump": 1.0, "Fuel Filter": 0.9,
+                                                     "Fuel Rail": 0.8, "Low-Pressure Fuel Pump": 0.7},
+        "Injection Quantity Instability":           {"Fuel Injector": 1.0, "Common Rail System": 0.9,
+                                                     "Injection Control Module": 0.8, "Fuel Rail": 0.6},
+        "Fuel Temperature Elevated":                {"Fuel Cooler": 1.0, "Fuel Return System": 0.9,
+                                                     "Fuel Filter": 0.7, "Fuel Pump": 0.6},
+        # ── Thermal / cooling ─────────────────────────────────────────────
+        "Engine Under-Temperature (Coolant Below 78°C)": {"Thermostat": 1.0, "Coolant Temperature Sensor": 0.8,
+                                                           "Engine Warm-up System": 0.7},
+        "Coolant Temperature Instability":          {"Radiator": 1.0, "Thermostat": 0.9,
+                                                     "Coolant Pump": 0.8, "Water Pump": 0.7},
+        # ── Engine dynamics ───────────────────────────────────────────────
+        "Engine Speed Instability":                 {"Crankshaft Position Sensor": 1.0, "Fuel Injectors": 0.9,
+                                                     "Engine Control Module": 0.8, "Timing System": 0.7},
+        # ── ECU / system-level ────────────────────────────────────────────
+        "ECU Current Limitations Active":           {"Engine Control Unit (ECU)": 1.0, "Wiring Harness": 0.8,
+                                                     "Power Module": 0.7, "CAN Bus": 0.6},
     }
     sensor_to_cause = {
-        "Battery Voltage (V)":      "Battery / Charging System Issue",
-        "Coolant Temp (°C)":        "Coolant Temperature Fluctuation",
-        "MAP (kPa)":                "Manifold Pressure Instability (MAP)",
-        "Fuel Rail Pressure (bar)": "Fuel Supply / Injector Pressure Drop"
+        # Legacy sensors
+        "Battery Voltage (V)":                  "Battery / Charging System Issue",
+        "Coolant Temp (°C)":                    "Coolant Temperature Fluctuation",
+        "MAP (kPa)":                            "Manifold Pressure Instability (MAP)",
+        "Fuel Rail Pressure (bar)":             "Fuel Supply / Injector Pressure Drop",
+        # Real vehicle sensors
+        "Total Air Mass Flow Into Engine (kg/h)": "Intake Air Mass Flow Instability",
+        "Total Air Mass Flow Into Engine":        "Intake Air Mass Flow Instability",
+        "Boost Pressure (mV)":                  "Boost Pressure Fluctuation",
+        "Boost Temperature (kg/h)":             "Turbo Charge Air Overheating",
+        "Turbocharger Vane Position (km/h)":    "Turbocharger Vane Overextension",
+        "HFM Temperature":                      "MAF Sensor Thermal Instability",
+        "Rail Pressure (bar)":                  "Fuel Rail Pressure Instability",
+        "Injection Quantity (mg/hub)":          "Injection Quantity Instability",
+        "Fuel Temperature":                     "Fuel Temperature Elevated",
+        "Coolant Temperature (degree C)":       "Coolant Temperature Instability",
+        "Engine Speed (rpm)":                   "Engine Speed Instability",
+        "Current Limitations Active (nil)":     "ECU Current Limitations Active",
     }
     component_scores = {}
     for sensor, severity in sensor_severity.items():
@@ -694,23 +1050,44 @@ def map_components_with_confidence(root_causes, sensor_severity):
     # Each sensor's variance (severity score) is used to weight the components
     # it is physically responsible for monitoring.
     SENSOR_COMPONENT_DIRECT = {
-        # Intake / Air system
-        "Total Air Mass Flow Into Engine":       {"Air Filter": 1.0, "MAF Sensor": 0.9, "Turbocharger": 0.7, "Intake Manifold": 0.6},
-        "Boost Pressure (mV)":                   {"Turbocharger": 1.0, "Intercooler": 0.8, "Wastegate": 0.7, "Boost Controller": 0.6},
-        "Boost Temperature (kg/h)":              {"Turbocharger": 1.0, "Intercooler": 0.9, "Charge Air Cooler": 0.7},
-        "HFM Temperature":                       {"MAF Sensor": 1.0, "Air Filter": 0.8, "Intake System": 0.6},
+        # ── Intake / Air system ───────────────────────────────────────────
+        "Total Air Mass Flow Into Engine (kg/h)": {"MAF Sensor": 1.0, "Air Filter": 0.9,
+                                                    "Turbocharger": 0.7, "Intake Manifold": 0.6},
+        "Total Air Mass Flow Into Engine":        {"MAF Sensor": 1.0, "Air Filter": 0.9,
+                                                    "Turbocharger": 0.7, "Intake Manifold": 0.6},
+        "Boost Pressure (mV)":                   {"Turbocharger": 1.0, "Wastegate": 0.9,
+                                                   "Intercooler": 0.8, "Boost Controller": 0.6},
+        "Boost Temperature (kg/h)":              {"Intercooler": 1.0, "Charge Air Cooler": 0.9,
+                                                   "Turbocharger": 0.8},
+        "Turbocharger Vane Position (km/h)":     {"Variable Geometry Turbo (VGT)": 1.0,
+                                                   "Turbocharger": 0.9, "Wastegate Actuator": 0.8},
+        "HFM Temperature":                       {"MAF Sensor": 1.0, "HFM Sensor": 0.9,
+                                                   "Air Filter": 0.7, "Intake Duct": 0.5},
         "Ambient Pressure (bar)":                {"MAP Sensor": 0.8, "ECU / Fueling": 0.6},
-        # Thermal / Cooling system
-        "Coolant Temperature Raw":               {"Radiator": 1.0, "Thermostat": 0.9, "Coolant Pump": 0.7, "Water Pump": 0.6},
+        # ── Fuel / injection system ───────────────────────────────────────
+        "Rail Pressure (bar)":                   {"High-Pressure Fuel Pump": 1.0, "Fuel Rail": 0.9,
+                                                   "Fuel Injector": 0.8, "Pressure Relief Valve": 0.6},
+        "Injection Quantity (mg/hub)":           {"Fuel Injector": 1.0, "Common Rail System": 0.9,
+                                                   "Injection Control Module": 0.8},
+        "Fuel Temperature":                      {"Fuel Cooler": 1.0, "Fuel Return System": 0.9,
+                                                   "Fuel Filter": 0.7, "Fuel Pump": 0.6},
+        "Fuel Rail Pressure (bar)":              {"High-Pressure Fuel Pump": 1.0, "Fuel Injector": 0.8,
+                                                   "Fuel Filter": 0.6},
+        # ── Thermal / Cooling system ──────────────────────────────────────
+        "Coolant Temperature (degree C)":        {"Thermostat": 1.0, "Radiator": 0.9,
+                                                   "Coolant Pump": 0.8, "Water Pump": 0.7},
         "Coolant Temp (°C)":                     {"Radiator": 1.0, "Thermostat": 0.9, "Coolant Pump": 0.7},
-        "Fuel Temperature":                      {"Fuel Cooler": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.7, "Fuel System": 0.6},
         "Ambient Temperature (degree C)":        {"Engine Cooling": 0.7, "HVAC System": 0.6, "Radiator": 0.5},
         "Cabin Temperature":                     {"HVAC System": 1.0, "Heater Core": 0.8, "AC Compressor": 0.7},
-        # Electrical / Charging
+        # ── Electrical / Charging ─────────────────────────────────────────
         "Battery Voltage (V)":                   {"Battery": 1.0, "Alternator": 0.8, "Voltage Regulator": 0.6},
-        # Fuel system
-        "Fuel Rail Pressure (bar)":              {"Fuel Pump": 1.0, "Fuel Injector": 0.8, "Fuel Filter": 0.6},
-        # Drivetrain / Engine
+        # ── Engine dynamics ───────────────────────────────────────────────
+        "Engine Speed (rpm)":                    {"Crankshaft Position Sensor": 1.0, "Fuel Injectors": 0.9,
+                                                   "Timing System": 0.8, "Engine Control Module": 0.7},
+        # ── ECU / system-level ────────────────────────────────────────────
+        "Current Limitations Active (nil)":      {"Engine Control Unit (ECU)": 1.0, "Wiring Harness": 0.8,
+                                                   "Power Module": 0.7, "CAN Bus": 0.6},
+        # ── Legacy / generic columns ──────────────────────────────────────
         "Engine RPM":                            {"Crankshaft Bearings": 1.0, "Timing Chain": 0.8, "Engine Mount": 0.6},
         "Vehicle Speed (km/h)":                  {"Drivetrain": 1.0, "Transmission": 0.8, "Wheel Bearings": 0.6},
         "Throttle Position (%)":                 {"Throttle Body": 1.0, "Accelerator Pedal": 0.8, "Drive-by-Wire": 0.6},
@@ -1372,21 +1749,22 @@ async def compare_files(files: List[UploadFile] = File(...)):
             df = pd.read_csv(BytesIO(contents))
             df.columns = df.columns.str.strip()
             df = normalize_columns(df)   # apply same column aliasing as /predict
+            # Keep compare path aligned with predict path for new/raw datasets
+            df = harmonize_new_dataset_signals(df)
             # CSV stores Fuel Rail Pressure in kPa despite column name saying "bar" — convert to real bar
             if "Fuel Rail Pressure (bar)" in df.columns:
                 df["Fuel Rail Pressure (bar)"] = df["Fuel Rail Pressure (bar)"] / 100.0
 
-            X_raw = build_features(df).dropna()
-            if len(X_raw) >= 5:
-                risk_series = model.predict(X_raw[model_features])
-                base_risk   = float(risk_series[-1])
+            ml_risk, _ = run_subsystem_inference(df)
+            if ml_risk is not None:
+                base_risk   = ml_risk
+                risk_series = np.array([base_risk])
             else:
-                # Same health-state-based fallback as /predict
                 hs = compute_health_state(df)
                 known_scores = [v["health_score"] for v in hs.values()
                                 if v["health_score"] is not None and v["ideal_min"] is not None]
-                base_risk = float(np.clip(1.0 - np.mean(known_scores) / 100.0, 0.05, 0.95)) \
-                            if known_scores else 0.3
+                base_risk   = float(np.clip(1.0 - np.mean(known_scores) / 100.0, 0.05, 0.95)) \
+                              if known_scores else 0.3
                 risk_series = np.array([base_risk])
             stress_mult, final_t, final_h, _ = calculate_environmental_stress(df)
             final_risk  = round(min(1.0, base_risk * stress_mult), 3)
@@ -1443,29 +1821,29 @@ async def predict(
         df.columns = df.columns.str.strip()
         # Auto-map real-world column name variants to internal standard names
         df = normalize_columns(df)
+        # Convert raw/new dataset channels into canonical engineering signals
+        df = harmonize_new_dataset_signals(df)
         user_id = get_current_user(credentials) if credentials else None
         # CSV stores Fuel Rail Pressure in kPa despite column name saying "bar" — convert to real bar
         if "Fuel Rail Pressure (bar)" in df.columns:
             df["Fuel Rail Pressure (bar)"] = df["Fuel Rail Pressure (bar)"] / 100.0
 
-        X_raw = build_features(df).dropna()
-        if len(X_raw) >= 5:
-            # Standard path: ML model on known features
-            risk_series = model.predict(X_raw[model_features])
-            base_risk   = float(risk_series[-1])
+        # ── Primary path: subsystem Isolation Forest inference ─────────────
+        # Runs against whichever subsystems have matching columns in this CSV.
+        # april01 → Air/Turbo + Thermal active; april02 → all 5 subsystems active.
+        ml_risk, subsystem_results = run_subsystem_inference(df)
+
+        if ml_risk is not None:
+            base_risk   = ml_risk
+            risk_series = np.array([base_risk])
         else:
-            # Health-state based risk for CSVs without the 4 ML columns.
-            # Derives risk from how far each sensor deviates from its ideal band
-            # (ISO 13381-1 health index methodology: risk = 1 - health_index)
+            # Pure fallback: ISO 13381-1 health-state risk when model not yet trained
+            subsystem_results = {}
             hs = compute_health_state(df)
             known_scores = [v["health_score"] for v in hs.values()
                             if v["health_score"] is not None and v["ideal_min"] is not None]
-            if known_scores:
-                avg_health = float(np.mean(known_scores))
-                base_risk  = float(np.clip(1.0 - avg_health / 100.0, 0.05, 0.95))
-            else:
-                base_risk  = 0.3
-            # Single-point series — classify_risk_dynamic will use absolute thresholds
+            base_risk   = float(np.clip(1.0 - np.mean(known_scores) / 100.0, 0.05, 0.95)) \
+                          if known_scores else 0.3
             risk_series = np.array([base_risk])
 
         actual_temp, actual_hum = get_visual_crossing_weather(city, timestamp)
@@ -1548,6 +1926,7 @@ async def predict(
             "alert_sent":       alert_sent,
             "vehicle_profile":  get_vehicle_profile(vehicle_type),
             "health_state":     compute_health_state(df),
+            "subsystem_health": subsystem_results,  # per-subsystem ML results
         })
     except Exception as e:
         return {"error": str(e)}

@@ -15,6 +15,8 @@
             --text-gray: #aab8c2;
             --danger-red: linear-gradient(135deg, #e74c3c, #c0392b);
             --warning-amber: linear-gradient(135deg, #f39c12, #d35400);
+            --glow-cyan: 0 0 0 1px rgba(0,210,255,0.25), 0 8px 26px rgba(0,210,255,0.2);
+            --glow-orange: 0 0 0 1px rgba(255,143,66,0.28), 0 10px 28px rgba(243,95,61,0.28);
         }
         body { margin:0; padding:30px 30px 30px 250px; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg-dark); color:white; letter-spacing:0.5px; }
         .container { max-width:1600px; margin:auto; }
@@ -31,10 +33,26 @@
         .sidebar-icon { font-size:14px; flex-shrink:0; }
 
         .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:25px; margin-bottom:30px; }
-        .kpi-card { background:var(--accent-orange); padding:25px; border-radius:16px; box-shadow:0 10px 30px rgba(243,95,61,0.25); transition:0.4s cubic-bezier(0.4,0,0.2,1); border:1px solid rgba(255,255,255,0.1); }
-        .kpi-card:hover { transform:translateY(-8px); box-shadow:0 15px 40px rgba(243,95,61,0.4); }
-        .kpi-title { font-size:13px; font-weight:600; text-transform:uppercase; opacity:0.85; margin-bottom:10px; }
-        .kpi-value { font-size:34px; font-weight:700; }
+        .kpi-card {
+            background: linear-gradient(135deg, #ff8f42 0%, #ff6a47 45%, #ff5a3d 100%);
+            padding:25px;
+            border-radius:16px;
+            box-shadow: var(--glow-orange);
+            transition:0.35s cubic-bezier(0.4,0,0.2,1);
+            border:1px solid rgba(255,255,255,0.16);
+            position: relative;
+            overflow: hidden;
+        }
+        .kpi-card::after {
+            content:"";
+            position:absolute;
+            inset:0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.16), rgba(255,255,255,0));
+            pointer-events:none;
+        }
+        .kpi-card:hover { transform:translateY(-5px); box-shadow: 0 0 0 1px rgba(255,143,66,0.32), 0 16px 38px rgba(243,95,61,0.34); }
+        .kpi-title { font-size:12px; font-weight:700; text-transform:uppercase; opacity:0.9; margin-bottom:10px; letter-spacing:0.8px; }
+        .kpi-value { font-size:40px; font-weight:800; text-shadow: 0 2px 12px rgba(0,0,0,0.22); }
 
         .controls { background:var(--card-bg); padding:20px; border-radius:14px; margin-bottom:30px; border:1px solid rgba(255,255,255,0.05); display:flex; justify-content:center; align-items:center; gap:15px; flex-wrap:wrap; }
         button { background:#0b84f3; color:white; border:none; padding:12px 24px; border-radius:8px; font-weight:600; cursor:pointer; transition:0.2s; }
@@ -175,6 +193,133 @@
         .alert-sent     { background:rgba(46,204,113,0.15); color:#2ecc71; border:1px solid #2ecc71; }
         .alert-pending  { background:rgba(243,156,18,0.1);  color:#f39c12; border:1px solid #f39c12; }
         .alert-inactive { background:rgba(255,255,255,0.05); color:var(--text-gray); border:1px solid rgba(255,255,255,0.1); }
+
+        /* ── NEW: Executive Summary ───────────────────────────────────── */
+        .exec-summary {
+            background: rgba(21, 33, 39, 0.82);
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: var(--glow-cyan);
+            backdrop-filter: blur(2px);
+            position: relative;
+            overflow: hidden;
+        }
+        .exec-summary::before {
+            content:"";
+            position:absolute;
+            inset:0;
+            background:
+              radial-gradient(1200px 160px at 15% -20%, rgba(0,210,255,0.18), transparent 60%),
+              radial-gradient(900px 140px at 95% 120%, rgba(255,143,66,0.12), transparent 62%);
+            pointer-events:none;
+        }
+        .exec-header {
+            display:flex;
+            justify-content:space-between;
+            align-items:flex-start;
+            gap:18px;
+            margin-bottom:12px;
+            flex-wrap:wrap;
+        }
+        .exec-tag {
+            font-size:11px;
+            text-transform:uppercase;
+            letter-spacing:1px;
+            color:#00d2ff;
+            border:1px solid rgba(0,210,255,0.24);
+            border-radius:999px;
+            padding:4px 10px;
+            background:rgba(0,210,255,0.06);
+        }
+        .exec-title {
+            font-size: 1.28rem;
+            font-weight: 700;
+            margin: 4px 0 8px 0;
+            color: #ffffff;
+            line-height:1.3;
+        }
+        .exec-subtitle {
+            color: var(--text-gray);
+            font-size: 12.5px;
+            margin-bottom: 16px;
+            line-height: 1.65;
+            max-width: 95%;
+        }
+        .exec-meta {
+            display:flex;
+            gap:8px;
+            flex-wrap:wrap;
+            margin-top:4px;
+        }
+        .exec-meta span {
+            font-size:10.5px;
+            color:#bfd0dc;
+            background:rgba(255,255,255,0.035);
+            border:1px solid rgba(255,255,255,0.06);
+            border-radius:8px;
+            padding:4px 8px;
+        }
+        .exec-kpis {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .exec-chip {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 10px 12px;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+        }
+        .exec-chip-label { font-size: 10px; text-transform: uppercase; color: #93a7b4; letter-spacing: 0.7px; }
+        .exec-chip-value { font-size: 17px; font-weight: 700; margin-top: 3px; color: #fff; }
+        .exec-insights-title {
+            font-size:11px;
+            text-transform:uppercase;
+            letter-spacing:1px;
+            color:var(--text-gray);
+            margin: 12px 0 8px 0;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.07);
+        }
+        .exec-insights {
+            display:grid;
+            grid-template-columns:repeat(3,1fr);
+            gap:10px;
+            margin-bottom:10px;
+        }
+        .exec-insight-card {
+            border:1px solid rgba(255,255,255,0.06);
+            background:rgba(0,0,0,0.16);
+            border-radius:10px;
+            padding:10px 12px;
+            transition: transform .2s ease, border-color .2s ease;
+        }
+        .exec-insight-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(0,210,255,0.25);
+        }
+        .exec-insight-head {
+            font-size:12px;
+            color:#dff3ff;
+            margin-bottom:4px;
+            font-weight:600;
+        }
+        .exec-insight-body {
+            font-size:12px;
+            color:#abc0ce;
+            line-height:1.5;
+        }
+        .exec-actions { margin: 0; padding-left: 18px; color: #d1dce5; line-height: 1.62; font-size: 12.5px; }
+        .exec-source {
+            margin-top:10px;
+            font-size:10.5px;
+            color:#8196a4;
+        }
+        @media (max-width: 1200px) {
+            .exec-kpis { grid-template-columns: repeat(2,1fr); }
+            .exec-insights { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -252,6 +397,40 @@
 
 <div class="container">
     <h1>Vehicle Predictive Maintenance Dashboard</h1>
+
+    <!-- ═══════════════════ NEW: EXECUTIVE SUMMARY ═══════════════════ -->
+    <div class="box full fade-section exec-summary" id="execSummarySection">
+        <div class="exec-header">
+            <div>
+                <div class="exec-tag">01 Executive Summary</div>
+                <div class="exec-title">From Sensor Signals to Maintenance Action</div>
+                <div class="exec-meta">
+                    <span id="execMetaDate">Live Session</span>
+                    <span id="execMetaFile">Awaiting file</span>
+                    <span>Research-aligned diagnostics</span>
+                </div>
+            </div>
+        </div>
+        <div class="exec-subtitle" id="execSummaryText">
+            Upload a trip file and click Analyze Vehicle to generate an executive-level maintenance summary with risk context, likely causes, and prioritized actions.
+        </div>
+        <div class="exec-kpis">
+            <div class="exec-chip"><div class="exec-chip-label">Overall Risk</div><div class="exec-chip-value" id="execRisk">-</div></div>
+            <div class="exec-chip"><div class="exec-chip-label">Status</div><div class="exec-chip-value" id="execStatus">-</div></div>
+            <div class="exec-chip"><div class="exec-chip-label">Top Component</div><div class="exec-chip-value" id="execTopComp">-</div></div>
+            <div class="exec-chip"><div class="exec-chip-label">Time to Fault</div><div class="exec-chip-value" id="execTTF">-</div></div>
+        </div>
+        <ul class="exec-actions" id="execActions">
+            <li>Run first diagnostic to populate recommendations.</li>
+        </ul>
+        <div class="exec-insights-title">Key Insights</div>
+        <div class="exec-insights" id="execInsights">
+            <div class="exec-insight-card"><div class="exec-insight-head">System Status</div><div class="exec-insight-body">Awaiting analysis.</div></div>
+            <div class="exec-insight-card"><div class="exec-insight-head">Dominant Driver</div><div class="exec-insight-body">Awaiting analysis.</div></div>
+            <div class="exec-insight-card"><div class="exec-insight-head">Climate Context</div><div class="exec-insight-body">Awaiting analysis.</div></div>
+        </div>
+        <div class="exec-source">Method: rolling diagnostics + adaptive risk bands + component attribution + climate stress adjustment.</div>
+    </div>
 
     <!-- ═══════════════════ EXISTING KPI GRID ═══════════════════ -->
     <div class="kpi-grid fade-section" id="sec-overview">
@@ -585,7 +764,160 @@ let liveWS = null;
 let liveConnected = false;
 let liveRiskHistory = [];
 
+function renderExecutiveSummary(data, fileName) {
+    const risk = Number(data?.risk ?? 0);
+    const status = data?.status || "UNKNOWN";
+    const topComp = data?.recommended_components?.[0]?.[0] || "N/A";
+    const ttf = (data?.time_to_fault ?? "-");
+    const primaryCause = data?.root_causes?.[0] || "No dominant anomaly detected";
+    const climate = Number(data?.climate_stress_pct ?? 0);
+
+    document.getElementById("execRisk").innerText = Number.isFinite(risk) ? risk.toFixed(3) : "-";
+    document.getElementById("execStatus").innerText = status;
+    document.getElementById("execTopComp").innerText = topComp;
+    document.getElementById("execTTF").innerText = Number.isFinite(Number(ttf)) ? `${Number(ttf).toFixed(2)} d` : "-";
+    document.getElementById("execMetaDate").innerText = new Date().toLocaleDateString();
+    document.getElementById("execMetaFile").innerText = fileName ? `File: ${fileName}` : "File: uploaded trip";
+
+    const intro = [
+        `Analysis of ${fileName || "uploaded trip data"} indicates a ${status} maintenance posture.`,
+        `Current risk is ${Number.isFinite(risk) ? risk.toFixed(3) : "-"}; primary concern is ${topComp.toLowerCase()}.`,
+        `Dominant signal: ${primaryCause}.`
+    ].join(" ");
+    document.getElementById("execSummaryText").innerText = intro;
+
+    const actions = [];
+    if (status === "CRITICAL") {
+        actions.push(`Initiate immediate inspection for ${topComp} and verify root-cause path (${primaryCause}).`);
+        actions.push("Trigger maintenance scheduling now and avoid high-load operation until inspection closure.");
+    } else if (status === "WARNING") {
+        actions.push(`Plan near-term service for ${topComp}; validate trend progression in next trip cycle.`);
+        actions.push("Monitor subsystem anomalies and compare with previous trip reports for escalation.");
+    } else {
+        actions.push("Maintain routine service interval and continue trend monitoring.");
+        actions.push("Use current run as baseline for upcoming comparative diagnostics.");
+    }
+    if (climate > 0) {
+        actions.push(`Environmental stress contributed +${climate.toFixed(1)}% risk; account for thermal/humidity conditions in planning.`);
+    }
+
+    document.getElementById("execActions").innerHTML = actions.map(a => `<li>${a}</li>`).join("");
+
+    const insights = [
+        {
+            h: "System Status",
+            b: `Vehicle is currently ${status}. Risk posture is ${Number.isFinite(risk) ? risk.toFixed(3) : "-"} across analyzed subsystems.`
+        },
+        {
+            h: "Dominant Driver",
+            b: `Primary trigger points to ${primaryCause}. Highest affected component is ${topComp}.`
+        },
+        {
+            h: "Climate Context",
+            b: climate > 0
+                ? `External conditions added +${climate.toFixed(1)}% stress; include environment-aware maintenance planning.`
+                : "No significant climate penalty in this run; internal mechanical signals dominate risk."
+        }
+    ];
+    document.getElementById("execInsights").innerHTML = insights
+        .map(x => `<div class="exec-insight-card"><div class="exec-insight-head">${x.h}</div><div class="exec-insight-body">${x.b}</div></div>`)
+        .join("");
+}
+
 const SENSOR_COMPONENT_MAP = {
+    // April/new dataset sensors
+    "Total Air Mass Flow Into Engine (kg/h)": {
+        components: ["MAF Sensor", "Air Filter", "Intake Ducting", "Turbocharger Compressor"],
+        impact: [100, 82, 68, 60],
+        color: "#00d2ff"
+    },
+    "Total Air Mass Flow Into Engine": {
+        components: ["MAF Sensor", "Air Filter", "Intake Ducting", "Turbocharger Compressor"],
+        impact: [100, 82, 68, 60],
+        color: "#00d2ff"
+    },
+    "Turbocharger Vane Position (km/h)": {
+        components: ["VGT Actuator", "Turbocharger Vane Mechanism", "Boost Control Solenoid", "ECU Boost Control"],
+        impact: [100, 88, 74, 62],
+        color: "#e67e22"
+    },
+    "Rail Pressure (bar)": {
+        components: ["High-Pressure Fuel Pump", "Fuel Rail", "Pressure Control Valve", "Injectors"],
+        impact: [100, 86, 74, 70],
+        color: "#9b59b6"
+    },
+    "Injection Quantity (mg/hub)": {
+        components: ["Injectors", "Injection Control Module", "Fuel Rail", "Combustion Control (ECU)"],
+        impact: [100, 84, 72, 64],
+        color: "#8e44ad"
+    },
+    "Coolant Temperature (degree C)": {
+        components: ["Thermostat", "Radiator", "Water Pump", "Coolant Temperature Sensor"],
+        impact: [100, 88, 80, 66],
+        color: "#e74c3c"
+    },
+    "Engine Speed (rpm)": {
+        components: ["Crankshaft Position Sensor", "Fuel Injectors", "ECU Idle Control", "Flywheel/DMF"],
+        impact: [100, 84, 72, 60],
+        color: "#2ecc71"
+    },
+    "Current Limitations Active (nil)": {
+        components: ["Engine Control Unit (ECU)", "Protection Strategy / Limp Logic", "Wiring Harness", "CAN Network"],
+        impact: [100, 82, 72, 64],
+        color: "#f1c40f"
+    },
+    "Boost Pressure (mV)": {
+        components: ["Boost/MAP Sensor", "Turbocharger Compressor", "Wastegate/VGT Control", "Charge Air Plumbing"],
+        impact: [100, 86, 74, 66],
+        color: "#1abc9c"
+    },
+    "Boost Temperature (kg/h)": {
+        components: ["Intercooler (Charge Air Cooler)", "Turbocharger", "Intake Air Temp Sensor", "Cooling Airflow Path"],
+        impact: [100, 84, 72, 60],
+        color: "#e67e22"
+    },
+    "Boost Temperature (°C)": {
+        components: ["Intercooler (Charge Air Cooler)", "Turbocharger", "Intake Air Temp Sensor", "Cooling Airflow Path"],
+        impact: [100, 84, 72, 60],
+        color: "#e67e22"
+    },
+    "HFM Temperature": {
+        components: ["MAF/HFM Sensor", "Intake Air Path", "Air Filter", "ECU Fueling Logic"],
+        impact: [100, 82, 68, 60],
+        color: "#16a085"
+    },
+    "HFM Temperature (°C)": {
+        components: ["MAF/HFM Sensor", "Intake Air Path", "Air Filter", "ECU Fueling Logic"],
+        impact: [100, 82, 68, 60],
+        color: "#16a085"
+    },
+    "Fuel Temperature": {
+        components: ["Fuel Cooler", "Fuel Return Circuit", "High-Pressure Pump", "Injectors"],
+        impact: [100, 84, 74, 66],
+        color: "#9b59b6"
+    },
+    "Ambient Temperature (degree C)": {
+        components: ["Ambient Temperature Sensor", "ECU Derating/Torque Strategy", "Cooling Pack (Radiator/Fan)", "HVAC Control"],
+        impact: [100, 78, 72, 64],
+        color: "#f39c12"
+    },
+    "Ambient Pressure (bar)": {
+        components: ["Barometric Pressure Sensor", "ECU Air-Fuel Calibration", "Turbo Boost Control", "EGR/Combustion Control"],
+        impact: [100, 82, 74, 60],
+        color: "#3498db"
+    },
+    "Cabin Temperature": {
+        components: ["Cabin Temp Sensor", "HVAC Blend Door Actuator", "Heater Core / AC Evaporator", "Climate Control Module"],
+        impact: [100, 84, 70, 62],
+        color: "#2ecc71"
+    },
+    "Coolant Temperature Raw": {
+        components: ["Coolant Temp Sensor Circuit", "ECU ADC/Input Channel", "Thermostat & Coolant Loop", "Wiring Harness"],
+        impact: [100, 84, 76, 68],
+        color: "#e74c3c"
+    },
+
+    // Legacy/current sensors
     "Battery Voltage (V)":      { components: ["Battery", "Alternator", "Voltage Regulator"],   impact: [100, 80, 60], color: "#f39c12" },
     "Coolant Temp (°C)":        { components: ["Radiator", "Thermostat", "Coolant Pump"],        impact: [100, 80, 70], color: "#e74c3c" },
     "MAP (kPa)":                { components: ["MAP Sensor", "Intake Manifold", "Vacuum Lines"], impact: [100, 70, 60], color: "#00d2ff" },
@@ -614,6 +946,7 @@ async function analyze() {
     }
     if(data.error) { alert("❌ Backend error:\n\n" + data.error); return; }
     if(data.risk === undefined) { alert("❌ Unexpected response. Check console (F12)."); return; }
+    renderExecutiveSummary(data, file?.name);
 
     // ── Existing KPI
     document.getElementById("riskCard").innerText   = data.risk;
@@ -1064,7 +1397,11 @@ async function compareAnalyze() {
     }
     if(res.error) { alert("Error: " + res.error); return; }
 
-    const data = res.comparison;
+    const data = Array.isArray(res.comparison) ? res.comparison : [];
+    if (!data.length) {
+        alert("No comparison data returned. Please verify selected CSVs.");
+        return;
+    }
     document.getElementById("compareCount").style.display = "inline";
     document.getElementById("compareCount").innerText = files.length + " files compared";
 
@@ -1312,8 +1649,14 @@ function onSensorSelect() {
 }
 function buildComponentChart(comps) {
     if(componentChart) componentChart.destroy();
-    const colors = comps.map((_, i) => {
-        const t = i / Math.max(comps.length - 1, 1);
+    // Clean malformed entries so bars and labels always stay aligned
+    const cleaned = (comps || [])
+        .filter(x => Array.isArray(x) && x.length >= 2)
+        .map(x => [String(x[0] ?? "").trim(), Number(x[1] ?? 0)])
+        .filter(([name, val]) => name.length > 0 && Number.isFinite(val));
+
+    const colors = cleaned.map((_, i) => {
+        const t = i / Math.max(cleaned.length - 1, 1);
         const r = Math.round(231 + (243-231)*t);
         const g = Math.round(76  + (156-76)*t*0.3);
         const b = Math.round(60  + (18-60)*t*0.2);
@@ -1322,16 +1665,20 @@ function buildComponentChart(comps) {
     componentChart = new Chart(document.getElementById("componentChart"), {
         type: "bar",
         data: {
-            labels: comps.map(x => x[0]),
-            datasets: [{ label: "Failure Risk %", data: comps.map(x => x[1]),
+            labels: cleaned.map(x => x[0]),
+            datasets: [{ label: "Failure Risk %", data: cleaned.map(x => x[1]),
                 backgroundColor: colors, borderRadius: 6, borderSkipped: false }]
         },
         options: {
             indexAxis: "y",
             scales: {
                 x: { grid:{ color:"rgba(255,255,255,0.05)" }, ticks:{ color:"#fff" }, title:{ display:true, text:"Failure Risk %", color:"#aab8c2", font:{size:11} } },
-                y: { grid:{ display:false }, ticks:{ color:"#ffffff", font:{ size:12 } } }
+                y: {
+                    grid:{ display:false },
+                    ticks:{ color:"#ffffff", font:{ size:12 }, autoSkip:false }
+                }
             },
+            layout: { padding: { left: 8, right: 8 } },
             plugins:{ legend:{ display:false } }
         }
     });
@@ -1621,6 +1968,7 @@ const _patchedAnalyze = async function() {
     }
     if(data.error) { alert("❌ Backend error:\n\n" + data.error); return; }
     if(data.risk === undefined) { alert("❌ Unexpected response. Check console (F12)."); return; }
+    renderExecutiveSummary(data, file?.name);
 
     // Show vehicle profile badge if available
     if (data.vehicle_profile) {
