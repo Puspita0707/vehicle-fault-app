@@ -1751,7 +1751,116 @@ async function loadHistory() {
     });
 }
 
-function downloadReport() { html2pdf().from(document.body).save("vehicle_report.pdf"); }
+function _pdfSafeText(value, fallback = "—") {
+    const v = (value ?? "").toString().trim();
+    return v ? v : fallback;
+}
+
+function _pdfEsc(value) {
+    return (value ?? "")
+        .toString()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function _collectMaintenanceRows(limit = 6) {
+    const rows = Array.from(document.querySelectorAll("#maintenanceTable tbody tr"));
+    return rows.slice(0, limit).map((tr) => {
+        const tds = tr.querySelectorAll("td");
+        return {
+            priority: _pdfSafeText(tds[0]?.innerText),
+            component: _pdfSafeText(tds[1]?.innerText),
+            probability: _pdfSafeText(tds[2]?.innerText),
+            action: _pdfSafeText(tds[3]?.innerText),
+        };
+    });
+}
+
+function _collectExecInsights() {
+    return Array.from(document.querySelectorAll("#execInsights .exec-insight-card")).map((card) => ({
+        title: _pdfSafeText(card.querySelector(".exec-insight-head")?.innerText),
+        body: _pdfSafeText(card.querySelector(".exec-insight-body")?.innerText),
+    }));
+}
+
+async function downloadReport() {
+    if (typeof html2pdf !== "function") {
+        alert("PDF library not loaded. Please refresh and try again.");
+        return;
+    }
+
+    const fileLine = _pdfSafeText(document.getElementById("execMetaFile")?.innerText, "File: uploaded trip");
+    const generatedAt = new Date().toLocaleString();
+    const reportHost = document.createElement("div");
+    reportHost.style.position = "fixed";
+    reportHost.style.left = "-99999px";
+    reportHost.style.top = "0";
+    reportHost.style.width = "1200px";
+    reportHost.style.background = "#0b1620";
+    reportHost.style.padding = "24px";
+    reportHost.style.color = "#fff";
+    reportHost.style.fontFamily = "Inter, Arial, sans-serif";
+
+    const header = document.createElement("div");
+    header.style.background = "#0f1b24";
+    header.style.border = "1px solid rgba(255,255,255,0.1)";
+    header.style.borderRadius = "12px";
+    header.style.padding = "14px 16px";
+    header.style.marginBottom = "14px";
+    header.innerHTML = `
+        <div style="font-size:22px;font-weight:800;margin-bottom:4px;">Vehicle Predictive Maintenance Report</div>
+        <div style="font-size:12px;color:#aab8c2;">${_pdfEsc(fileLine)} | Generated: ${_pdfEsc(generatedAt)}</div>
+    `;
+    reportHost.appendChild(header);
+
+    const sectionIds = [
+        "execSummarySection",
+        "sec-overview",
+        "sec-components",
+        "sec-insights",
+        "driverSection",
+        "healthStateSection",
+        "rulSection",
+        "climateImpactSection",
+    ];
+
+    let added = 0;
+    sectionIds.forEach((id) => {
+        const src = document.getElementById(id);
+        if (!src) return;
+        if (getComputedStyle(src).display === "none" || src.offsetHeight < 20) return;
+        const clone = src.cloneNode(true);
+        clone.style.marginBottom = "14px";
+        clone.querySelectorAll("button").forEach((b) => b.remove());
+        clone.querySelectorAll("input, select").forEach((el) => el.remove());
+        reportHost.appendChild(clone);
+        added += 1;
+    });
+
+    if (!added) {
+        alert("No visible report sections found. Please run Analyze Vehicle first.");
+        return;
+    }
+
+    document.body.appendChild(reportHost);
+    const options = {
+        margin: [5, 5, 5, 5],
+        filename: `vehicle_report_visual_${new Date().toISOString().slice(0, 10)}.pdf`,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#0b1620", scrollX: 0, scrollY: 0 },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["css", "legacy"] },
+    };
+
+    try {
+        await html2pdf().set(options).from(reportHost).save();
+    } finally {
+        reportHost.remove();
+    }
+}
 
 function toggleExtra(id, total) {
     const ex = document.getElementById('ex_' + id);

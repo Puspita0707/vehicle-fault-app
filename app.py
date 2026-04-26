@@ -4,20 +4,25 @@ import math
 import asyncio
 import random
 import smtplib
+import logging
+import time
+import uuid
 import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import psycopg2
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 import pandas as pd
 import joblib
 import numpy as np
 from io import BytesIO
 from scipy.stats import linregress
 from typing import List
+from threading import Lock
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -30,6 +35,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Load environment variables
 # -------------------------------
 load_dotenv()
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger("vehicle_fault_app")
 
 # ----------------------------------------------------------------
 # JSON safety: replace NaN / ±Infinity with None so FastAPI never
@@ -86,6 +97,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_metrics_lock = Lock()
+_metrics = {
+    "requests_total": 0,
+    "requests_failed_total": 0,
+    "requests_by_path": {},
+    "latency_ms_by_path": {},
+}
+
+
+def _metrics_inc(path: str, latency_ms: float, failed: bool) -> None:
+    with _metrics_lock:
+        _metrics["requests_total"] += 1
+        if failed:
+            _metrics["requests_failed_total"] += 1
+        _metrics["requests_by_path"][path] = _metrics["requests_by_path"].get(path, 0) + 1
+        entry = _metrics["latency_ms_by_path"].setdefault(path, {"count": 0, "total": 0.0, "max": 0.0})
+        entry["count"] += 1
+        entry["total"] += latency_ms
+        if latency_ms > entry["max"]:
+            entry["max"] = latency_ms
+
+
+@app.middleware("http")
+async def audit_and_metrics_middleware(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    start = time.perf_counter()
+    path = request.url.path
+    method = request.method
+    status_code = 500
+    failed = True
+    response = None
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        failed = status_code >= 400
+        return response
+    except Exception:
+        failed = True
+        raise
+    finally:
+        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+        _metrics_inc(path, elapsed_ms, failed)
+        logger.info(
+            "audit request_id=%s method=%s path=%s status=%s latency_ms=%.2f client=%s",
+            request_id,
+            method,
+            path,
+            status_code,
+            elapsed_ms,
+            request.client.host if request.client else "unknown",
+        )
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
+MIN_REQUIRED_ROWS = int(os.getenv("MIN_REQUIRED_ROWS", "5"))
+ALLOWED_CSV_TYPES = {"text/csv", "application/csv", "application/vnd.ms-excel", ""}
+
+
+def _validate_csv_upload(file: UploadFile, content: bytes) -> None:
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="CSV file is required.")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail=f"{file.filename}: only .csv files are allowed.")
+    if (file.content_type or "") not in ALLOWED_CSV_TYPES:
+        raise HTTPException(status_code=400, detail=f"{file.filename}: unsupported content type {file.content_type}.")
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{file.filename}: file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{file.filename}: file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
+        )
+
+
+def _read_csv_strict(file: UploadFile, content: bytes) -> pd.DataFrame:
+    _validate_csv_upload(file, content)
+    try:
+        df = pd.read_csv(BytesIO(content))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"{file.filename}: invalid CSV format.") from exc
+    if df.empty:
+        raise HTTPException(status_code=400, detail=f"{file.filename}: CSV has no rows.")
+    if len(df) < MIN_REQUIRED_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{file.filename}: at least {MIN_REQUIRED_ROWS} rows required for reliable analysis.",
+        )
+    df.columns = df.columns.str.strip()
+    return df
+
 @app.get("/")
 def serve_frontend():
     return FileResponse("index.html", headers={
@@ -94,6 +196,61 @@ def serve_frontend():
         "Expires": "0"
     })
 
+
+@app.get("/health")
+def health():
+    db_ok = conn is not None and cursor is not None
+    model_ok = _model_bundle is not None and _subsystem_columns is not None
+    status_txt = "ok" if (db_ok and model_ok) else "degraded"
+    return {
+        "status": status_txt,
+        "db": "connected" if db_ok else "disconnected",
+        "model": "loaded" if model_ok else "missing_or_incompatible",
+        "checks": {
+            "db_ready": db_ok,
+            "model_ready": model_ok,
+        },
+        "model_version": _active_model_meta.get("version"),
+    }
+
+
+@app.get("/metrics")
+def metrics():
+    with _metrics_lock:
+        latency_summary = {
+            path: {
+                "count": stats["count"],
+                "avg_ms": round((stats["total"] / stats["count"]), 2) if stats["count"] else 0.0,
+                "max_ms": round(stats["max"], 2),
+            }
+            for path, stats in _metrics["latency_ms_by_path"].items()
+        }
+        return {
+            "requests_total": _metrics["requests_total"],
+            "requests_failed_total": _metrics["requests_failed_total"],
+            "requests_by_path": dict(_metrics["requests_by_path"]),
+            "latency_ms_by_path": latency_summary,
+        }
+
+
+@app.on_event("startup")
+def startup_safety_checks():
+    env = os.getenv("APP_ENV", "development").lower()
+    strict = os.getenv("STRICT_STARTUP_VALIDATION", "false").lower() == "true"
+    missing = [k for k in ["SECRET_KEY", "DB_NAME", "DB_USER"] if not os.getenv(k)]
+    if missing and (strict or env == "production"):
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    if missing:
+        logger.warning("Startup check: missing environment variables: %s", ", ".join(missing))
+    if SECRET_KEY == "vehicle-maintenance-secret-key-2024":
+        logger.warning("Default SECRET_KEY in use. Set a secure SECRET_KEY for production.")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 # -------------------------------
 # Load trained artifacts — subsystem-based model bundle
 # vehicle_risk_model.pkl contains 5 Isolation Forest pipelines (one per subsystem)
@@ -101,15 +258,85 @@ def serve_frontend():
 # -------------------------------
 _model_bundle = None
 _subsystem_columns = None
-try:
-    _model_bundle = joblib.load("vehicle_risk_model.pkl")
-    # v2.0 bundle has a 'subsystems' key; old single-model has 'predict' method
-    if not isinstance(_model_bundle, dict) or 'subsystems' not in _model_bundle:
-        print("⚠️  Old model format detected — subsystem inference disabled until retrained.")
+_active_model_meta = {"version": None, "bundle_path": None, "columns_path": None}
+MODEL_MANIFEST_PATH = os.getenv("MODEL_MANIFEST_PATH", "models/manifest.json")
+
+
+def _ensure_model_manifest():
+    manifest_dir = os.path.dirname(MODEL_MANIFEST_PATH) or "."
+    os.makedirs(manifest_dir, exist_ok=True)
+    if os.path.exists(MODEL_MANIFEST_PATH):
+        return
+    default_manifest = {
+        "active_version": "legacy-root",
+        "models": {
+            "legacy-root": {
+                "bundle_path": "vehicle_risk_model.pkl",
+                "columns_path": "subsystem_columns.pkl",
+                "created_at": datetime.utcnow().isoformat(),
+                "notes": "Backfilled from existing root model files.",
+            }
+        },
+    }
+    with open(MODEL_MANIFEST_PATH, "w", encoding="utf-8") as f:
+        json.dump(default_manifest, f, indent=2)
+
+
+def _load_model_manifest():
+    _ensure_model_manifest()
+    try:
+        with open(MODEL_MANIFEST_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.warning("Failed to read model manifest, using legacy fallback: %s", exc)
+        return {
+            "active_version": "legacy-root",
+            "models": {
+                "legacy-root": {
+                    "bundle_path": "vehicle_risk_model.pkl",
+                    "columns_path": "subsystem_columns.pkl",
+                }
+            },
+        }
+
+
+def _resolve_active_model_paths():
+    manifest = _load_model_manifest()
+    active = manifest.get("active_version")
+    models = manifest.get("models", {})
+    model_meta = models.get(active, {})
+    bundle_path = model_meta.get("bundle_path", "vehicle_risk_model.pkl")
+    columns_path = model_meta.get("columns_path", "subsystem_columns.pkl")
+    return active, bundle_path, columns_path
+
+
+def _load_active_model_artifacts():
+    global _model_bundle, _subsystem_columns, _active_model_meta
+    active_version, bundle_path, columns_path = _resolve_active_model_paths()
+    try:
+        _model_bundle = joblib.load(bundle_path)
+        if not isinstance(_model_bundle, dict) or "subsystems" not in _model_bundle:
+            logger.warning("Old or invalid model format for version '%s'.", active_version)
+            _model_bundle = None
+        _subsystem_columns = joblib.load(columns_path)
+        _active_model_meta = {
+            "version": active_version,
+            "bundle_path": bundle_path,
+            "columns_path": columns_path,
+        }
+        logger.info("Loaded model version '%s' from manifest.", active_version)
+    except Exception as exc:
+        logger.warning("Model load failed for version '%s': %s", active_version, exc)
         _model_bundle = None
-    _subsystem_columns = joblib.load("subsystem_columns.pkl")
-except Exception as e:
-    print(f"Model load note: {e}")
+        _subsystem_columns = None
+        _active_model_meta = {
+            "version": active_version,
+            "bundle_path": bundle_path,
+            "columns_path": columns_path,
+        }
+
+
+_load_active_model_artifacts()
 
 # -------------------------------
 # PostgreSQL Connection
@@ -136,6 +363,9 @@ except Exception as e:
     cursor = None
 
 def create_table_if_not_exists():
+    if cursor is None or conn is None:
+        logger.warning("Skipping table creation because database connection is unavailable.")
+        return
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
             id SERIAL PRIMARY KEY,
@@ -1742,12 +1972,14 @@ async def compare_files(files: List[UploadFile] = File(...)):
     Returns per-file: risk, status, driver score, RUL snapshot, sensor averages.
     Used for the multi-vehicle/multi-day comparison chart.
     """
+    if len(files) < 2 or len(files) > 10:
+        raise HTTPException(status_code=400, detail="Please upload between 2 and 10 CSV files for comparison.")
+
     results = []
     try:
         for f in files:
             contents = await f.read()
-            df = pd.read_csv(BytesIO(contents))
-            df.columns = df.columns.str.strip()
+            df = _read_csv_strict(f, contents)
             df = normalize_columns(df)   # apply same column aliasing as /predict
             # Keep compare path aligned with predict path for new/raw datasets
             df = harmonize_new_dataset_signals(df)
@@ -1797,8 +2029,11 @@ async def compare_files(files: List[UploadFile] = File(...)):
                 },
                 "risk_trend": [round(float(x), 3) for x in risk_series[-50:]]  # last 50 pts
             })
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.exception("Compare failed.")
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
     return sanitize_floats({"comparison": results})
 
@@ -1817,8 +2052,7 @@ async def predict(
 ):
     try:
         contents = await file.read()
-        df = pd.read_csv(BytesIO(contents))
-        df.columns = df.columns.str.strip()
+        df = _read_csv_strict(file, contents)
         # Auto-map real-world column name variants to internal standard names
         df = normalize_columns(df)
         # Convert raw/new dataset channels into canonical engineering signals
@@ -1866,7 +2100,7 @@ async def predict(
 
         # --- Get last service dates for RUL reset ---
         last_service_dict = {}
-        if user_id and vehicle_id:
+        if user_id and vehicle_id and cursor is not None:
             cursor.execute(
                 """SELECT DISTINCT ON (component) component, service_date, notes
                    FROM maintenance_log WHERE vehicle_id = %s AND user_id = %s
@@ -1883,14 +2117,15 @@ async def predict(
         scrubber = build_scrubber_data(df)
 
         # Database log — cast to Python float to avoid psycopg2 "schema np does not exist" error
-        cursor.execute("""
-            INSERT INTO predictions (file_name, risk, status, time_to_fault, root_causes, recommended_components, user_id, vehicle_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (file.filename, float(final_risk), status, float(ttf),
-              ", ".join(causes),
-              ", ".join([f"{c}({p}%)" for c, p in comp_conf]),
-              user_id, vehicle_id))
-        conn.commit()
+        if cursor is not None and conn is not None:
+            cursor.execute("""
+                INSERT INTO predictions (file_name, risk, status, time_to_fault, root_causes, recommended_components, user_id, vehicle_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (file.filename, float(final_risk), status, float(ttf),
+                  ", ".join(causes),
+                  ", ".join([f"{c}({p}%)" for c, p in comp_conf]),
+                  user_id, vehicle_id))
+            conn.commit()
 
         # --- NEW: Fire alerts if CRITICAL ---
         alert_sent = {"whatsapp": False, "email": False}
@@ -1928,11 +2163,16 @@ async def predict(
             "health_state":     compute_health_state(df),
             "subsystem_health": subsystem_results,  # per-subsystem ML results
         })
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.exception("Predict failed for file: %s", getattr(file, "filename", "unknown"))
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.get("/history")
 def get_history():
+    if cursor is None:
+        raise HTTPException(status_code=503, detail="Database not available.")
     cursor.execute("""
         SELECT file_name, upload_time, risk, status, root_causes, recommended_components
         FROM predictions ORDER BY upload_time DESC LIMIT 7
