@@ -779,11 +779,22 @@ function renderExecutiveSummary(data, fileName) {
     document.getElementById("execMetaDate").innerText = new Date().toLocaleDateString();
     document.getElementById("execMetaFile").innerText = fileName ? `File: ${fileName}` : "File: uploaded trip";
 
-    const intro = [
-        `Analysis of ${fileName || "uploaded trip data"} indicates a ${status} maintenance posture.`,
-        `Current risk is ${Number.isFinite(risk) ? risk.toFixed(3) : "-"}; primary concern is ${topComp.toLowerCase()}.`,
-        `Dominant signal: ${primaryCause}.`
-    ].join(" ");
+    const riskLabel = Number.isFinite(risk) ? risk.toFixed(3) : "-";
+    const tripName = fileName || "this uploaded trip";
+    let intro = "";
+    if (status === "CRITICAL") {
+        intro = `For ${tripName}, diagnostics indicate a critical reliability posture (${riskLabel}), with ${topComp.toLowerCase()} emerging as the dominant pressure point. `
+            + `The clearest escalation signature is ${primaryCause}. `
+            + `This is an immediate action moment: rapid intervention now is the most effective path to avoid downstream failure and unplanned downtime.`;
+    } else if (status === "WARNING") {
+        intro = `For ${tripName}, the fleet signal has shifted into a warning posture (${riskLabel}), primarily influenced by ${topComp.toLowerCase()}. `
+            + `The leading technical trigger is ${primaryCause}. `
+            + `This is a high-leverage prevention window: timely service now can preserve reliability and prevent costlier corrective work later.`;
+    } else {
+        intro = `For ${tripName}, the vehicle remains in a stable operating envelope (${riskLabel}), with ${topComp.toLowerCase()} as the primary watchpoint. `
+            + `The main observed signal is ${primaryCause}. `
+            + `No immediate intervention is required; this run is best treated as a benchmark for trend-led maintenance planning.`;
+    }
     document.getElementById("execSummaryText").innerText = intro;
 
     const actions = [];
