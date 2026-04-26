@@ -2175,7 +2175,10 @@ def get_history():
         raise HTTPException(status_code=503, detail="Database not available.")
     cursor.execute("""
         SELECT file_name, upload_time, risk, status, root_causes, recommended_components
-        FROM predictions ORDER BY upload_time DESC LIMIT 7
+        FROM predictions
+        WHERE upload_time >= (CURRENT_TIMESTAMP - INTERVAL '7 days')
+        ORDER BY upload_time DESC
+        LIMIT 7
     """)
     return [
         {
